@@ -11,13 +11,6 @@ interface FrameSizeInput {
   viewportSize: Size;
 }
 
-// ─── Shell padding constants ────────────────────────────────────────────────
-// These are the physical bezel widths at 1:1 CSS pixels. Keep them tight.
-const PHONE_SHELL = 9;      // outer shell padding
-const PHONE_INNER = 6;      // inner black bezel
-const TABLET_SHELL = 12;
-const TABLET_INNER = 10;
-
 // ─── Main component ─────────────────────────────────────────────────────────
 export function DeviceFrame({
   device,
@@ -46,10 +39,13 @@ export function DeviceFrame({
   const hostname = safeHostname(url);
   const landscape = orientation === "landscape";
   const compact = landscape || profile.kind === "iphone-classic" || profile.kind === "tablet";
+  const shellP = profile.style.shellPadding ?? profile.shellPadding;
+  const innerP = profile.style.innerPadding ?? 0;
+  const contentR = profile.style.contentRadius ?? profile.contentRadius;
 
   const statusH = showStatusBar ? getStatusHeight(profile.platform, profile.kind, compact) : 0;
   const addrH = showUrlBar && profile.platform === "android" ? 48 : 0;
-  const bottomH = showUrlBar ? getBottomHeight(profile.platform, compact) : 0;
+  const bottomH = showUrlBar && profile.platform !== "ios" ? getBottomHeight(profile.platform, compact) : 0;
 
   // ── No frame ──────────────────────────────────────────────────────────────
   if (!showFrame) {
@@ -161,23 +157,26 @@ export function DeviceFrame({
   if (profile.kind === "tablet") {
     const isIos = profile.platform === "ios";
     const screenH = viewportSize.height + statusH + addrH + bottomH;
-    const shellGrad = isIos
-      ? "from-[#d0cdc6] via-[#111] to-[#e8e4d8]"
-      : "from-[#3a424e] via-[#121820] to-[#6c7480]";
     return (
       <div
-        className={`relative bg-gradient-to-br ${shellGrad} shadow-[0_24px_72px_rgba(0,0,0,0.28)] ring-1 ring-black/20`}
-        style={{ borderRadius: 36, padding: TABLET_SHELL }}
+        className="relative shadow-[0_24px_72px_rgba(0,0,0,0.28)] ring-1 ring-black/20"
+        style={{
+          background: profile.style.shellGradient ?? (isIos
+            ? "linear-gradient(135deg, #d0cdc6 0%, #111 52%, #e8e4d8 100%)"
+            : "linear-gradient(135deg, #3a424e 0%, #121820 52%, #6c7480 100%)"),
+          borderRadius: 36,
+          padding: shellP
+        }}
       >
         {/* Camera */}
         <div className="absolute left-1/2 top-[10px] z-30 h-[8px] w-[8px] -translate-x-1/2 rounded-full bg-black/80 ring-1 ring-white/10" />
         <div
           className="overflow-hidden bg-black"
-          style={{ borderRadius: 26, padding: TABLET_INNER }}
+          style={{ borderRadius: 26, padding: innerP }}
         >
           <div
             className={`relative overflow-hidden ${darkMode ? "bg-[#0f172a]" : "bg-white"}`}
-            style={{ borderRadius: landscape ? 16 : 20, width: viewportSize.width, height: screenH }}
+            style={{ borderRadius: landscape ? Math.max(10, contentR - 6) : contentR, width: viewportSize.width, height: screenH }}
           >
             {showStatusBar && <StatusBar platform={profile.platform} showBattery={showBattery} compact={compact} dark={darkMode} />}
             {showUrlBar && profile.platform === "android" && <AndroidAddrBar hostname={hostname} dark={darkMode} top topOffset={statusH} />}
@@ -202,27 +201,24 @@ export function DeviceFrame({
 
   // ── Phone (iOS / Android) ───────────────────────────────────────────────────
   const isIos = profile.platform === "ios";
-  const isFold = profile.kind === "android-fold";
-  const shellGrad = isIos
-    ? "from-[#c8bc9a] via-[#111] to-[#f0e8d0]"
-    : isFold
-      ? "from-[#1e2228] via-[#0c0e12] to-[#3c424a]"
-      : "from-[#313844] via-[#10141a] to-[#666e7a]";
-
   const screenH = viewportSize.height + statusH + addrH + bottomH;
-  const innerR = Math.max(16, profile.radius - PHONE_SHELL - PHONE_INNER - 2);
+  const innerR = Math.max(16, contentR);
 
   return (
     <div
-      className={`relative bg-gradient-to-br ${shellGrad} shadow-[0_28px_80px_rgba(0,0,0,0.32)] ring-1 ring-black/20`}
-      style={{ borderRadius: profile.radius, padding: PHONE_SHELL }}
+      className="relative shadow-[0_28px_80px_rgba(0,0,0,0.32)] ring-1 ring-black/20"
+      style={{
+        background: profile.style.shellGradient,
+        borderRadius: profile.radius,
+        padding: shellP
+      }}
     >
-      <SideButtons platform={profile.platform} kind={profile.kind} />
+      <SideButtons platform={profile.platform} kind={profile.kind} color={profile.style.sideButtonColor} />
       <div
         className="overflow-hidden bg-black"
-        style={{ borderRadius: Math.max(16, profile.radius - PHONE_SHELL), padding: PHONE_INNER }}
+        style={{ borderRadius: Math.max(16, profile.radius - shellP), padding: innerP }}
       >
-        <DeviceCutout kind={profile.kind} platform={profile.platform} />
+        <DeviceCutout kind={profile.kind} platform={profile.platform} style={profile.style} />
         <div
           className={`relative overflow-hidden ${darkMode ? "bg-[#0f172a]" : "bg-white"}`}
           style={{ borderRadius: landscape ? Math.max(10, innerR - 6) : innerR, width: viewportSize.width, height: screenH }}
@@ -283,11 +279,11 @@ export function estimateDeviceFrameSize({ device, showFrame, showStatusBar, show
   const compact = profile.kind === "tablet" || profile.kind === "iphone-classic" || viewportSize.width > viewportSize.height;
   const statusH = showStatusBar ? getStatusHeight(profile.platform, profile.kind, compact) : 0;
   const addrH = showUrlBar && profile.platform === "android" ? 48 : 0;
-  const bottomH = showUrlBar ? getBottomHeight(profile.platform, compact) : 0;
+  const bottomH = showUrlBar && profile.platform !== "ios" ? getBottomHeight(profile.platform, compact) : 0;
 
   const isTablet = profile.kind === "tablet";
-  const shellP = isTablet ? TABLET_SHELL : PHONE_SHELL;
-  const innerP = isTablet ? TABLET_INNER : PHONE_INNER;
+  const shellP = profile.style.shellPadding ?? profile.shellPadding;
+  const innerP = profile.style.innerPadding ?? (isTablet ? 10 : 6);
   const chrome = (shellP + innerP) * 2;
 
   return {
@@ -298,16 +294,30 @@ export function estimateDeviceFrameSize({ device, showFrame, showStatusBar, show
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function DeviceCutout({ kind, platform }: { kind: string; platform: string }) {
+function DeviceCutout({ kind, platform, style }: { kind: string; platform: string; style: { cutoutTop?: number; cutoutWidth?: number; cutoutHeight?: number } }) {
   if (kind === "iphone-dynamic-island") {
+    const width = style.cutoutWidth ?? 118;
+    const height = style.cutoutHeight ?? 26;
     return (
-      <div className="pointer-events-none absolute left-1/2 top-[14px] z-30 h-[30px] w-[120px] -translate-x-1/2 rounded-full bg-black shadow-inner">
-        <span className="absolute right-[16px] top-1/2 h-[9px] w-[9px] -translate-y-1/2 rounded-full bg-[#111] ring-[1.5px] ring-[#0a0a0a]" />
+      <div
+        className="pointer-events-none absolute left-1/2 z-30 -translate-x-1/2 rounded-full bg-black shadow-[inset_0_1px_2px_rgba(255,255,255,0.06)]"
+        style={{ top: style.cutoutTop ?? 22, width, height }}
+      >
+        <span className="absolute right-[16px] top-1/2 h-[8px] w-[8px] -translate-y-1/2 rounded-full bg-[#111] ring-[1.5px] ring-[#050505]" />
       </div>
     );
   }
   if (kind === "iphone-notch") {
-    return <div className="pointer-events-none absolute left-1/2 top-[6px] z-30 h-[28px] w-[140px] -translate-x-1/2 rounded-b-[18px] bg-black" />;
+    return (
+      <div
+        className="pointer-events-none absolute left-1/2 z-30 -translate-x-1/2 rounded-b-[18px] bg-black"
+        style={{
+          top: style.cutoutTop ?? 15,
+          width: style.cutoutWidth ?? 138,
+          height: style.cutoutHeight ?? 25
+        }}
+      />
+    );
   }
   if (kind === "iphone-classic") {
     return <div className="pointer-events-none absolute left-1/2 top-[12px] z-30 h-[4px] w-[48px] -translate-x-1/2 rounded-full bg-[#222]" />;
@@ -346,9 +356,9 @@ function SafariBar({ hostname, compact, dark }: { hostname: string; compact: boo
     <>
       <div
         className={`pointer-events-none absolute inset-x-3 z-20 flex items-center gap-2 rounded-[12px] border px-3 font-medium shadow-sm backdrop-blur-xl ${
-          dark ? "border-white/10 bg-[#1f2937]/90 text-slate-200" : "border-slate-200/80 bg-[#f1f2f5]/90 text-slate-600"
+          dark ? "border-white/10 bg-[#1f2937]/82 text-slate-200" : "border-slate-200/80 bg-[#f1f2f5]/82 text-slate-600"
         }`}
-        style={{ bottom: tabH + 4, height: barH, fontSize: compact ? 11 : 13 }}
+        style={{ bottom: tabH + 8, height: barH, fontSize: compact ? 11 : 13 }}
       >
         <Lock size={10} className={`shrink-0 ${dark ? "text-slate-200" : "text-slate-700"}`} />
         <span className="min-w-0 flex-1 truncate">{hostname}</span>
@@ -356,7 +366,7 @@ function SafariBar({ hostname, compact, dark }: { hostname: string; compact: boo
       </div>
       <div
         className={`pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-center justify-around ${
-          dark ? "bg-[#111827]/95 text-sky-300" : "bg-white/95 text-[#007AFF]"
+          dark ? "bg-[#111827]/82 text-sky-300" : "bg-white/82 text-[#007AFF]"
         }`}
         style={{ height: tabH }}
       >
@@ -417,15 +427,15 @@ function HomeIndicator() {
   );
 }
 
-function SideButtons({ platform, kind }: { platform: string; kind: string }) {
+function SideButtons({ platform, kind, color }: { platform: string; kind: string; color?: string }) {
   if (platform === "desktop" || kind === "watch") return null;
-  const btn = platform === "ios" ? "bg-[#8a7d60]" : "bg-[#2c333d]";
+  const btnStyle = { backgroundColor: color ?? (platform === "ios" ? "#8a7d60" : "#2c333d") };
   return (
     <>
-      <div className={`absolute -left-[3px] top-[20%] h-9 w-[3px] rounded-l ${btn}`} />
-      <div className={`absolute -left-[3px] top-[30%] h-14 w-[3px] rounded-l ${btn}`} />
+      <div className="absolute -left-[3px] top-[20%] h-9 w-[3px] rounded-l" style={btnStyle} />
+      <div className="absolute -left-[3px] top-[30%] h-14 w-[3px] rounded-l" style={btnStyle} />
       {kind !== "android-fold" && (
-        <div className={`absolute -right-[3px] top-[28%] h-20 w-[3px] rounded-r ${btn}`} />
+        <div className="absolute -right-[3px] top-[28%] h-20 w-[3px] rounded-r" style={btnStyle} />
       )}
     </>
   );

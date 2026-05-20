@@ -1,26 +1,44 @@
-import { ChevronDown, Minus, Plus, RotateCw, X } from "lucide-react";
+import { Camera, ChevronDown, ExternalLink, Info, Minus, Plus, RefreshCw, RotateCw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { supportsOrientation, toLandscapeAwareSize } from "../../domain/device/device-service";
-import { devices as allDevices } from "../../domain/device/device-catalog";
+import { mediaQueryFor, supportsOrientation, toLandscapeAwareSize } from "../../domain/device/device-service";
 import type { Device, Size } from "../../domain/device/device.types";
 import type { DisplaySettings, PreviewSlot } from "../../domain/simulator/simulator.types";
 import { useSimulator } from "../../app/SimulatorProvider";
+import { useDeviceCatalog } from "../../app/DeviceCatalogProvider";
 import { DeviceFrame, estimateDeviceFrameSize } from "./DeviceFrame";
 
 const CARD_PAD = 32;
+interface ScrollSyncPayload {
+  slotId: string;
+  xRatio: number;
+  yRatio: number;
+  scrollHeight?: number;
+  scrollWidth?: number;
+  viewportHeight?: number;
+  viewportWidth?: number;
+}
 
 interface PreviewCardProps {
   slot: PreviewSlot;
   device: Device;
   display: DisplaySettings;
   removable: boolean;
+  onCapture: () => void;
 }
 
-export function PreviewCard({ slot, device, display, removable }: PreviewCardProps) {
+type BridgeStatus = "checking" | "ready" | "unavailable" | "blocked";
+
+export function PreviewCard({ slot, device, display, removable, onCapture }: PreviewCardProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const bridgeStatusTimer = useRef<number | undefined>(undefined);
+  const bridgeStatusRef = useRef<BridgeStatus>("checking");
   const [containerSize, setContainerSize] = useState<Size>({ width: 0, height: 0 });
   const [blocked, setBlocked] = useState(false);
-  const { setActiveSlot, removeSlot, rotateSlot, zoomSlot, setSlotDevice } = useSimulator();
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>("checking");
+  const [scrollMeta, setScrollMeta] = useState<ScrollSyncPayload | null>(null);
+  const [inspectOpen, setInspectOpen] = useState(false);
+  const { setActiveSlot, removeSlot, rotateSlot, zoomSlot, setSlotDevice, reloadSlot } = useSimulator();
 
   const canRotate = supportsOrientation(device);
   const viewportSize = canRotate
@@ -58,7 +76,87 @@ export function PreviewCard({ slot, device, display, removable }: PreviewCardPro
 
   useEffect(() => {
     setBlocked(false);
+    setBridgeStatus("checking");
+    setScrollMeta(null);
   }, [device.id, slot.reloadToken, slot.url]);
+
+  useEffect(() => {
+    bridgeStatusRef.current = bridgeStatus;
+  }, [bridgeStatus]);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    const register = () => {
+      setBridgeStatus("checking");
+      iframe.contentWindow?.postMessage({ type: "MDV_PREVIEW_REGISTER", slotId: slot.id }, "*");
+      window.clearTimeout(bridgeStatusTimer.current);
+      bridgeStatusTimer.current = window.setTimeout(() => {
+        if (bridgeStatusRef.current === "checking") {
+          setBlocked(true);
+          setBridgeStatus("unavailable");
+        }
+      }, 6000);
+    };
+
+    iframe.addEventListener("load", register);
+    register();
+
+    return () => {
+      iframe.removeEventListener("load", register);
+      window.clearTimeout(bridgeStatusTimer.current);
+    };
+  }, [slot.id, slot.reloadToken, slot.url]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const data = event.data;
+      if (!data || typeof data !== "object" || data.slotId !== slot.id) return;
+
+      if (data.type === "MDV_PREVIEW_READY") {
+        setBridgeStatus("ready");
+        setBlocked(false);
+        setScrollMeta(data as ScrollSyncPayload);
+        return;
+      }
+
+      if (data.type === "MDV_PREVIEW_BLOCKED_OR_UNAVAILABLE") {
+        setBridgeStatus("blocked");
+        setBlocked(true);
+        return;
+      }
+
+      if (data.type === "MDV_SCROLL_SYNC_EVENT") {
+        setBridgeStatus("ready");
+        setScrollMeta(data as ScrollSyncPayload);
+        if (!display.scrollSync) return;
+        broadcastScrollSync(data as ScrollSyncPayload);
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [display.scrollSync, slot.id]);
+
+  useEffect(() => {
+    if (!display.scrollSync || blocked) return;
+
+    const onSync = (event: Event) => {
+      const detail = (event as CustomEvent<ScrollSyncPayload>).detail;
+      if (!detail || detail.slotId === slot.id) return;
+      iframeRef.current?.contentWindow?.postMessage({
+        type: "MDV_APPLY_SCROLL_SYNC",
+        slotId: slot.id,
+        xRatio: detail.xRatio,
+        yRatio: detail.yRatio
+      }, "*");
+    };
+
+    window.addEventListener("MDV_SCROLL_SYNC_EVENT", onSync);
+    return () => window.removeEventListener("MDV_SCROLL_SYNC_EVENT", onSync);
+  }, [blocked, display.scrollSync, slot.id]);
 
   return (
     <section
@@ -100,12 +198,31 @@ export function PreviewCard({ slot, device, display, removable }: PreviewCardPro
         <CardBtn dark={display.darkMode} label="Zoom in" onClick={() => zoomSlot(slot.id, "in")}>
           <Plus size={14} />
         </CardBtn>
+        <CardBtn
+          dark={display.darkMode}
+          label="Inspect viewport"
+          onClick={() => setInspectOpen((value) => !value)}
+        >
+          <Info size={14} />
+        </CardBtn>
         {removable && (
           <CardBtn dark={display.darkMode} label="Remove" onClick={() => removeSlot(slot.id)}>
             <X size={14} />
           </CardBtn>
         )}
       </div>
+
+      {inspectOpen && (
+        <InspectPanel
+          device={device}
+          display={display}
+          slot={slot}
+          viewportSize={viewportSize}
+          bridgeStatus={bridgeStatus}
+          scrollMeta={scrollMeta}
+          dark={display.darkMode}
+        />
+      )}
 
       {/* ── Canvas ── */}
       <div
@@ -138,9 +255,14 @@ export function PreviewCard({ slot, device, display, removable }: PreviewCardPro
             >
               <div style={{ width: viewportSize.width, height: viewportSize.height }}>
                 {blocked ? (
-                  <BlockedView url={slot.url} />
+                  <BlockedView
+                    url={slot.url}
+                    onCapture={onCapture}
+                    onReload={() => reloadSlot(slot.id)}
+                  />
                 ) : (
                   <iframe
+                    ref={iframeRef}
                     key={`${slot.id}-${slot.reloadToken}`}
                     title={`${device.name} preview`}
                     src={slot.url}
@@ -163,6 +285,10 @@ export function PreviewCard({ slot, device, display, removable }: PreviewCardPro
   );
 }
 
+function broadcastScrollSync(detail: ScrollSyncPayload) {
+  window.dispatchEvent(new CustomEvent<ScrollSyncPayload>("MDV_SCROLL_SYNC_EVENT", { detail }));
+}
+
 // ─── Device switcher ──────────────────────────────────────────────────────────
 
 const TYPE_ORDER = ["phone", "tablet", "laptop", "desktop", "tv", "watch"] as const;
@@ -170,6 +296,14 @@ const TYPE_LABEL: Record<string, string> = {
   phone: "Phones", tablet: "Tablets", laptop: "Laptops",
   desktop: "Desktops", tv: "TV", watch: "Watch",
 };
+const POPULAR_DEVICE_IDS = [
+  "apple-iphone-14-pro-max-2022",
+  "apple-iphone-16-pro-max-2024",
+  "samsung-galaxy-s24",
+  "samsung-galaxy-s24-ultra",
+  "apple-ipad-air-4",
+  "macbook-air"
+];
 
 function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Device; dark: boolean; onSwitch: (id: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -178,6 +312,7 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const activeItemRef = useRef<HTMLButtonElement>(null);
+  const { devices, favorites, recents, addRecent } = useDeviceCatalog();
 
   // Close on outside click
   useEffect(() => {
@@ -215,18 +350,39 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return allDevices;
-    return allDevices.filter((d) =>
+    if (!q) return devices;
+    return devices.filter((d) =>
       [d.name, d.brand, d.family, d.type].join(" ").toLowerCase().includes(q)
     );
-  }, [query]);
+  }, [devices, query]);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, Device[]>();
-    for (const t of TYPE_ORDER) map.set(t, []);
-    for (const d of filtered) map.get(d.type)?.push(d);
-    return Array.from(map.entries()).filter(([, list]) => list.length > 0);
-  }, [filtered]);
+    const used = new Set<string>();
+    const sections: Array<[string, Device[]]> = [];
+    const q = query.trim();
+
+    const addSection = (label: string, ids: string[]) => {
+      const list = ids
+        .map((id) => filtered.find((device) => device.id === id))
+        .filter((device): device is Device => !!device && !used.has(device.id));
+      if (list.length === 0) return;
+      list.forEach((device) => used.add(device.id));
+      sections.push([label, list]);
+    };
+
+    if (!q) {
+      addSection("Popular", POPULAR_DEVICE_IDS);
+      addSection("Recent", recents);
+      addSection("Favorites", favorites);
+    }
+
+    for (const t of TYPE_ORDER) {
+      const list = filtered.filter((device) => device.type === t && !used.has(device.id));
+      if (list.length > 0) sections.push([TYPE_LABEL[t], list]);
+    }
+
+    return sections;
+  }, [favorites, filtered, query, recents]);
 
   return (
     <div ref={ref} className="relative min-w-[190px] flex-1">
@@ -266,7 +422,7 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
             {grouped.map(([type, list]) => (
               <div key={type}>
                 <p className={`px-3 pb-1 pt-2 text-[10px] font-black uppercase tracking-widest ${dark ? "text-slate-500" : "text-slate-400"}`}>
-                  {TYPE_LABEL[type]}
+                  {type}
                 </p>
                 <div className="grid grid-cols-1 gap-1 px-2 min-[420px]:grid-cols-2">
                   {list.map((d) => (
@@ -279,7 +435,7 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
                           ? "bg-slate-900 text-white hover:bg-slate-800"
                           : dark ? "text-slate-200 hover:bg-white/[0.07]" : "text-slate-700 hover:bg-slate-50"
                       }`}
-                      onClick={() => { onSwitch(d.id); setOpen(false); }}
+                      onClick={() => { addRecent(d.id); onSwitch(d.id); setOpen(false); }}
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12px] font-semibold leading-tight">
@@ -306,19 +462,93 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
 
-function BlockedView({ url }: { url: string }) {
+function InspectPanel({
+  bridgeStatus,
+  dark,
+  device,
+  display,
+  scrollMeta,
+  slot,
+  viewportSize,
+}: {
+  bridgeStatus: BridgeStatus;
+  dark: boolean;
+  device: Device;
+  display: DisplaySettings;
+  scrollMeta: ScrollSyncPayload | null;
+  slot: PreviewSlot;
+  viewportSize: Size;
+}) {
+  const scrollPercent = scrollMeta ? `${Math.round(scrollMeta.yRatio * 100)}%` : "Unknown";
+  const statusText =
+    bridgeStatus === "ready" ? "Ready" :
+    bridgeStatus === "checking" ? "Checking" :
+    bridgeStatus === "blocked" ? "Blocked" :
+    "Unavailable";
+
+  return (
+    <div className={`grid shrink-0 gap-2 border-b px-3 py-2 text-[11px] ${
+      dark ? "border-white/10 bg-[#111827] text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600"
+    }`}>
+      <div className="grid grid-cols-2 gap-2 min-[920px]:grid-cols-4">
+        <InspectMetric label="Device" value={shortName(device.name)} dark={dark} />
+        <InspectMetric label="Viewport" value={`${viewportSize.width}×${viewportSize.height}`} dark={dark} />
+        <InspectMetric label="DPR" value={`${device.pixelRatio}x`} dark={dark} />
+        <InspectMetric label="Orientation" value={slot.orientation} dark={dark} />
+        <InspectMetric label="Chrome" value={display.showUrlBar ? "Visible" : "Hidden"} dark={dark} />
+        <InspectMetric label="Frame" value={slot.showFrame ? "Visible" : "Hidden"} dark={dark} />
+        <InspectMetric label="Sync bridge" value={statusText} dark={dark} />
+        <InspectMetric label="Scroll" value={scrollPercent} dark={dark} />
+      </div>
+      <code className={`block truncate rounded px-2 py-1 font-semibold ${
+        dark ? "bg-white/5 text-slate-300" : "bg-white text-slate-600"
+      }`}>
+        {mediaQueryFor(device, slot.orientation)}
+      </code>
+      <p className="truncate font-medium">{slot.url}</p>
+    </div>
+  );
+}
+
+function InspectMetric({ dark, label, value }: { dark: boolean; label: string; value: string }) {
+  return (
+    <div className={`rounded-md border px-2 py-1.5 ${
+      dark ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white"
+    }`}>
+      <p className="font-black uppercase tracking-[0.08em] text-slate-400">{label}</p>
+      <p className={`mt-0.5 truncate font-bold ${dark ? "text-slate-100" : "text-slate-900"}`}>{value}</p>
+    </div>
+  );
+}
+
+function BlockedView({ onCapture, onReload, url }: { onCapture: () => void; onReload: () => void; url: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 bg-slate-50 p-6 text-center">
-      <p className="text-sm font-bold text-slate-800">Can't preview this site</p>
-      <p className="max-w-[220px] text-xs leading-5 text-slate-500">
-        This site blocks embedding. Open it in a real tab then use screenshots here.
+      <p className="text-sm font-black text-slate-900">This site blocks iframe preview.</p>
+      <p className="max-w-[250px] break-all text-[11px] font-semibold leading-5 text-slate-500">{url}</p>
+      <p className="max-w-[260px] text-xs leading-5 text-slate-500">
+        The page likely keeps frame protection, uses a restricted browser URL, or prevented the preview bridge from loading.
       </p>
-      <button
-        className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-bold text-white"
-        onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
-      >
-        Open in tab
-      </button>
+      <div className="grid w-full max-w-[240px] gap-2">
+        <button
+          className="flex items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-bold text-white"
+          onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+        >
+          <ExternalLink size={13} /> Open in tab
+        </button>
+        <button
+          className="flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700"
+          onClick={onReload}
+        >
+          <RefreshCw size={13} /> Reload preview
+        </button>
+        <button
+          className="flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700"
+          onClick={onCapture}
+        >
+          <Camera size={13} /> Capture current tab instead
+        </button>
+      </div>
     </div>
   );
 }

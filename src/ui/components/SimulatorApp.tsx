@@ -1,4 +1,4 @@
-import { Camera, Check, Moon, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, RectangleHorizontal, RotateCw, Signal, Sun, X } from "lucide-react";
+import { Camera, Check, Link2, LayoutGrid, Moon, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, RectangleHorizontal, RotateCw, Signal, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useDeviceCatalog } from "../../app/DeviceCatalogProvider";
 import { useSimulator } from "../../app/SimulatorProvider";
@@ -8,7 +8,7 @@ import { AnnotationOverlay } from "./AnnotationOverlay";
 
 export function SimulatorApp() {
   const { findDevice } = useDeviceCatalog();
-  const { slots, display, activeSlotId, addSlot, reloadAllSlots, updateDisplay } = useSimulator();
+  const { slots, display, activeSlotId, addSlot, applyDevicePreset, reloadAllSlots, updateDisplay } = useSimulator();
   const [annotationOpen, setAnnotationOpen] = useState(false);
   const [annotationImage, setAnnotationImage] = useState<string | undefined>();
   const [capturing, setCapturing] = useState(false);
@@ -42,6 +42,15 @@ export function SimulatorApp() {
       setCapturing(false);
     }
   }
+
+  const captureMeta = {
+    title: "Multi Device Viewer QA capture",
+    url: slots[0]?.url ?? "",
+    devices: slots.map((slot) => {
+      const device = findDevice(slot.deviceId);
+      return `${device.name} (${device.cssViewport.width}x${device.cssViewport.height})`;
+    })
+  };
 
   // ── Resizable panel widths (percentages, always sum to 100) ──────────────
   const [widths, setWidths] = useState<number[]>(() =>
@@ -135,6 +144,14 @@ export function SimulatorApp() {
                 Browser chrome
               </Toggle>
               <Toggle
+                active={display.scrollSync}
+                dark={display.darkMode}
+                icon={<Link2 size={15} />}
+                onClick={() => updateDisplay((current) => ({ ...current, scrollSync: !current.scrollSync }))}
+              >
+                Scroll sync
+              </Toggle>
+              <Toggle
                 active={display.darkMode}
                 dark={display.darkMode}
                 icon={display.darkMode ? <Moon size={15} /> : <Sun size={15} />}
@@ -161,6 +178,34 @@ export function SimulatorApp() {
                   Add device
                 </SidebarBtn>
               )}
+            </div>
+          </div>
+
+          {/* Layout presets */}
+          <div>
+            <Label dark={display.darkMode}>Presets</Label>
+            <div className="mt-1.5 grid grid-cols-1 gap-1">
+              <SidebarBtn
+                dark={display.darkMode}
+                icon={<LayoutGrid size={14} />}
+                onClick={() => applyDevicePreset(["apple-iphone-14-pro-max-2022", "apple-ipad-air-4"])}
+              >
+                Mobile vs Tablet
+              </SidebarBtn>
+              <SidebarBtn
+                dark={display.darkMode}
+                icon={<LayoutGrid size={14} />}
+                onClick={() => applyDevicePreset(["apple-iphone-14-pro-max-2022", "samsung-galaxy-s24"])}
+              >
+                iOS standard vs Android
+              </SidebarBtn>
+              <SidebarBtn
+                dark={display.darkMode}
+                icon={<LayoutGrid size={14} />}
+                onClick={() => applyDevicePreset(["samsung-galaxy-s24", "apple-ipad-air-4", "macbook-air-2020-13"])}
+              >
+                Android + iOS tablet + laptop
+              </SidebarBtn>
             </div>
           </div>
 
@@ -213,6 +258,7 @@ export function SimulatorApp() {
                 device={findDevice(slot.deviceId)}
                 display={display}
                 removable={slots.length > 1}
+                onCapture={() => void takeScreenshot()}
               />
               {/* Drag handle — rendered on the right edge of every panel except the last */}
               {i < slots.length - 1 && !narrowLayout && (
@@ -235,7 +281,7 @@ export function SimulatorApp() {
         </div>
       </main>
 
-      {annotationOpen && <AnnotationOverlay imageUrl={annotationImage} onClose={() => setAnnotationOpen(false)} />}
+      {annotationOpen && <AnnotationOverlay imageUrl={annotationImage} meta={captureMeta} onClose={() => setAnnotationOpen(false)} />}
     </div>
   );
 }
