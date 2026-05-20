@@ -1,5 +1,5 @@
-import { Check, Copy, Lock, MousePointer2 } from "lucide-react";
-import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { Lock, MousePointer2 } from "lucide-react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 // Guard against undefined/null values arriving from the content-script postMessage.
 // TypeScript types say string/number, but at runtime fields can be missing.
@@ -85,82 +85,9 @@ interface ElementInspectOverlayProps {
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 
-function ColorSwatch({ hex, dark }: { hex: string; dark: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback(async () => {
-    try { await navigator.clipboard.writeText(hex); } catch { /* ignore */ }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  }, [hex]);
-
-  return (
-    <button type="button" onClick={copy} title={`Copy ${hex}`}
-      className="flex items-center gap-1.5 rounded px-1 py-0.5 transition hover:opacity-80">
-      <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-sm border border-black/10"
-        style={{ backgroundColor: hex }} />
-      <span className={`font-mono text-[11px] font-medium ${dark ? "text-slate-300" : "text-slate-700"}`}>{hex}</span>
-      {copied
-        ? <Check size={10} className="text-teal-400" strokeWidth={3} />
-        : <Copy size={10} className={dark ? "text-slate-500" : "text-slate-400"} />}
-    </button>
-  );
-}
-
-function CopyableChip({ value, dark }: { value: string; dark: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback(async () => {
-    try { await navigator.clipboard.writeText(value); } catch { /* ignore */ }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  }, [value]);
-
-  return (
-    <button type="button" onClick={copy} title={`Copy ${value}`}
-      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold transition ${
-        copied
-          ? "border-teal-400/50 bg-teal-400/10 text-teal-300"
-          : dark
-            ? "border-white/15 bg-white/[0.06] text-slate-300 hover:bg-white/[0.1]"
-            : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
-      }`}>
-      {value}
-      {copied
-        ? <Check size={9} strokeWidth={3} className="text-teal-400" />
-        : <Copy size={9} className="opacity-40" />}
-    </button>
-  );
-}
-
-function CopyableBlock({ value, dark, label }: { value: string; dark: boolean; label: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback(async () => {
-    try { await navigator.clipboard.writeText(value); } catch { /* ignore */ }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }, [value]);
-
-  return (
-    <div className={`rounded-lg border ${dark ? "border-white/10 bg-white/[0.04]" : "border-slate-100 bg-slate-50"}`}>
-      <div className={`flex items-center justify-between border-b px-2 py-1 ${dark ? "border-white/10" : "border-slate-100"}`}>
-        <span className={`text-[9px] font-black uppercase tracking-widest ${dark ? "text-slate-500" : "text-slate-400"}`}>{label}</span>
-        <button type="button" onClick={copy}
-          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold transition ${
-            copied
-              ? "text-teal-400"
-              : dark ? "text-slate-500 hover:text-slate-300" : "text-slate-400 hover:text-slate-600"
-          }`}>
-          {copied ? <Check size={9} strokeWidth={3} /> : <Copy size={9} />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-      <pre className={`overflow-x-auto whitespace-pre-wrap break-all px-2 py-1.5 font-mono text-[9px] leading-relaxed ${dark ? "text-slate-300" : "text-slate-700"}`}>{value}</pre>
-    </div>
-  );
-}
-
 function Row({ label, value, dark }: { label: string; value: string; dark: boolean }) {
   return (
-    <p className="font-mono text-[10px]">
+    <p className="grid grid-cols-[78px_1fr] gap-2 font-mono text-[10px]">
       <span className={`font-semibold ${dark ? "text-slate-500" : "text-slate-400"}`}>{label} </span>
       <span className={dark ? "text-slate-200" : "text-slate-700"}>{value}</span>
     </p>
@@ -176,159 +103,69 @@ function Section({ label, children, dark }: { label: string; children: ReactNode
   );
 }
 
-/**
- * Box model diagram — flat absolute-positioned layout.
- *
- * Renders four concentric coloured bands (margin/border/padding/content)
- * using a single positioned container with absolutely-placed value labels.
- * No nested divs — eliminates all sizing collapse issues.
- *
- * Layout (fixed 240 × 148 px canvas):
- *
- *   ┌─── margin ────────────────────────────────┐
- *   │           marginTop                        │
- *   │  ┌─── border ──────────────────────────┐  │
- *   │  │          borderWidth                 │  │
- *   │  │  ┌─── padding ──────────────────┐   │  │
- *   │  │  │        paddingTop             │   │  │
- *   │L │L │  ┌──────────────────────┐  R │ R │R │
- *   │  │  │  │  W × H  (content)    │    │   │  │
- *   │  │  │  └──────────────────────┘    │   │  │
- *   │  │  │        paddingBottom          │   │  │
- *   │  │  └──────────────────────────────┘   │  │
- *   │  │          borderWidth                 │  │
- *   │  └─────────────────────────────────────┘  │
- *   │           marginBottom                     │
- *   └────────────────────────────────────────────┘
- */
 function BoxModelDiagram({ data, dark }: { data: InspectData; dark: boolean }) {
-  // Strip "px" suffix, treat "0px" as "0"
   const v = (raw: unknown): string => {
     const str = ss(raw, "0px");
     return str === "0px" ? "0" : str.replace(/px$/, "");
   };
 
-  const d = {
-    mT: v(data.marginTop),    mR: v(data.marginRight),
-    mB: v(data.marginBottom), mL: v(data.marginLeft),
-    bW: v(data.borderWidth),
-    pT: v(data.paddingTop),   pR: v(data.paddingRight),
-    pB: v(data.paddingBottom),pL: v(data.paddingLeft),
-    w:  Math.round(sn(data.width)),
-    h:  Math.round(sn(data.height)),
+  const margin = {
+    top: v(data.marginTop),
+    right: v(data.marginRight),
+    bottom: v(data.marginBottom),
+    left: v(data.marginLeft),
   };
+  const padding = {
+    top: v(data.paddingTop),
+    right: v(data.paddingRight),
+    bottom: v(data.paddingBottom),
+    left: v(data.paddingLeft),
+  };
+  const border = v(data.borderWidth);
 
-  // Band colours — outermost to innermost
-  const col = dark
-    ? { margin: "#2d2410", border: "#2a1d0e", padding: "#0e2118", content: "#0e1a2e" }
-    : { margin: "#fef9ee", border: "#fff7ed", padding: "#f0fdf4", content: "#eff6ff" };
+  const layer = dark
+    ? {
+        margin: "border-amber-400/25 bg-amber-400/10 text-amber-200",
+        border: "border-orange-400/30 bg-orange-400/10 text-orange-200",
+        padding: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200",
+        content: "border-blue-400/30 bg-blue-400/10 text-blue-200",
+        muted: "text-slate-500",
+      }
+    : {
+        margin: "border-amber-200 bg-amber-50 text-amber-800",
+        border: "border-orange-200 bg-orange-50 text-orange-800",
+        padding: "border-emerald-200 bg-emerald-50 text-emerald-800",
+        content: "border-blue-200 bg-blue-50 text-blue-800",
+        muted: "text-slate-400",
+      };
 
-  const txt = dark
-    ? { margin: "#fbbf24", border: "#fb923c", padding: "#4ade80", content: "#60a5fa", label: "#64748b" }
-    : { margin: "#92400e", border: "#9a3412", padding: "#166534", content: "#1e40af", label: "#94a3b8" };
-
-  // Absolute positions for the four bands (as % of 240×148)
-  // margin: full canvas, border: inset 18px, padding: inset 36px, content: inset 54px
-  const bands = [
-    { key: "margin",  x: 0,  y: 0,  w: 240, h: 148, fill: col.margin,  stroke: txt.margin  },
-    { key: "border",  x: 18, y: 18, w: 204, h: 112, fill: col.border,  stroke: txt.border  },
-    { key: "padding", x: 36, y: 36, w: 168, h: 76,  fill: col.padding, stroke: txt.padding },
-    { key: "content", x: 54, y: 54, w: 132, h: 40,  fill: col.content, stroke: txt.content },
-  ];
-
-  // Label positions: [x, y, value, color, anchor]
-  type Anchor = "middle" | "start" | "end";
-  const labels: Array<[number, number, string, string, Anchor]> = [
-    // margin
-    [120, 11,  d.mT, txt.margin,  "middle"],
-    [120, 141, d.mB, txt.margin,  "middle"],
-    [6,   74,  d.mL, txt.margin,  "middle"],
-    [234, 74,  d.mR, txt.margin,  "middle"],
-    // border
-    [120, 28,  d.bW, txt.border,  "middle"],
-    [120, 125, d.bW, txt.border,  "middle"],
-    [24,  74,  d.bW, txt.border,  "middle"],
-    [216, 74,  d.bW, txt.border,  "middle"],
-    // padding
-    [120, 45,  d.pT, txt.padding, "middle"],
-    [120, 108, d.pB, txt.padding, "middle"],
-    [43,  74,  d.pL, txt.padding, "middle"],
-    [197, 74,  d.pR, txt.padding, "middle"],
-    // layer labels (top-left of each band)
-    [4,   16,  "margin",  txt.label, "start"],
-    [22,  34,  "border",  txt.label, "start"],
-    [40,  52,  "padding", txt.label, "start"],
-  ];
+  const edgeLabel = `absolute rounded px-1 font-mono text-[9px] font-semibold leading-none`;
 
   return (
-    <div className={`overflow-hidden rounded-lg border ${dark ? "border-white/10" : "border-slate-200"}`}>
-      {/* SVG diagram */}
-      <div className={dark ? "bg-[#0f1117]" : "bg-white"}>
-        <svg
-          viewBox="0 0 240 148"
-          width="100%"
-          style={{ display: "block", aspectRatio: "240/148" }}
-          aria-label="Box model diagram"
-        >
-          {/* Bands — draw outermost first so inner ones paint on top */}
-          {bands.map(({ key, x, y, w, h, fill, stroke }) => (
-            <rect
-              key={key}
-              x={x} y={y} width={w} height={h}
-              fill={fill}
-              stroke={stroke}
-              strokeWidth={1}
-              strokeOpacity={0.35}
-              rx={3}
-            />
-          ))}
+    <div className={`rounded border p-1.5 ${dark ? "border-white/10 bg-white/[0.03]" : "border-slate-100 bg-slate-50"}`}>
+      <div className={`relative h-[118px] rounded border ${layer.margin}`}>
+        <span className={`${edgeLabel} left-1 top-1 ${layer.muted}`}>margin</span>
+        <span className={`${edgeLabel} left-1/2 top-1 -translate-x-1/2`}>{margin.top}</span>
+        <span className={`${edgeLabel} bottom-1 left-1/2 -translate-x-1/2`}>{margin.bottom}</span>
+        <span className={`${edgeLabel} left-1 top-1/2 -translate-y-1/2`}>{margin.left}</span>
+        <span className={`${edgeLabel} right-1 top-1/2 -translate-y-1/2`}>{margin.right}</span>
 
-          {/* Content label: W × H */}
-          <text
-            x={120} y={78}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fontSize={11}
-            fontWeight={700}
-            fontFamily="ui-monospace,SFMono-Regular,Menlo,monospace"
-            fill={txt.content}
-          >
-            {d.w} × {d.h}
-          </text>
+        <div className={`absolute inset-[18px] rounded border ${layer.border}`}>
+          <span className={`${edgeLabel} left-1 top-1 ${layer.muted}`}>border {border}</span>
 
-          {/* Value + layer labels */}
-          {labels.map(([x, y, val, color, anchor], i) => (
-            <text
-              key={i}
-              x={x} y={y}
-              textAnchor={anchor}
-              dominantBaseline="middle"
-              fontSize={8.5}
-              fontWeight={val === "margin" || val === "border" || val === "padding" ? 900 : 600}
-              fontFamily="ui-monospace,SFMono-Regular,Menlo,monospace"
-              fill={color}
-              opacity={val === "margin" || val === "border" || val === "padding" ? 0.45 : 1}
-              letterSpacing={val === "margin" || val === "border" || val === "padding" ? 0.5 : 0}
-            >
-              {val}
-            </text>
-          ))}
-        </svg>
-      </div>
+          <div className={`absolute inset-[14px] rounded border ${layer.padding}`}>
+            <span className={`${edgeLabel} left-1 top-1 ${layer.muted}`}>padding</span>
+            <span className={`${edgeLabel} left-1/2 top-1 -translate-x-1/2`}>{padding.top}</span>
+            <span className={`${edgeLabel} bottom-1 left-1/2 -translate-x-1/2`}>{padding.bottom}</span>
+            <span className={`${edgeLabel} left-1 top-1/2 -translate-y-1/2`}>{padding.left}</span>
+            <span className={`${edgeLabel} right-1 top-1/2 -translate-y-1/2`}>{padding.right}</span>
 
-      {/* Summary row: m / p / b shorthand */}
-      <div className={`border-t px-2.5 py-1.5 ${dark ? "border-white/10 bg-white/[0.03]" : "border-slate-100 bg-slate-50"}`}>
-        <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-          {[
-            { label: "margin",  color: txt.margin,  value: `${d.mT} ${d.mR} ${d.mB} ${d.mL}` },
-            { label: "padding", color: txt.padding, value: `${d.pT} ${d.pR} ${d.pB} ${d.pL}` },
-            { label: "border",  color: txt.border,  value: d.bW },
-          ].map(({ label, color, value }) => (
-            <span key={label} className="flex items-baseline gap-1 font-mono text-[9px]">
-              <span style={{ color }} className="font-black">{label[0]}:</span>
-              <span className={dark ? "text-slate-300" : "text-slate-600"}>{value}</span>
-            </span>
-          ))}
+            <div className={`absolute inset-x-[18px] inset-y-[24px] flex items-center justify-center rounded border ${layer.content}`}>
+              <span className="whitespace-nowrap font-mono text-[10px] font-bold leading-none">
+                w {Math.round(sn(data.width))} × h {Math.round(sn(data.height))}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -353,57 +190,65 @@ export function ElementInspectOverlay({
 
     const cr = containerRef.current.getBoundingClientRect();
     const ir = iframeRef.current.getBoundingClientRect();
-    const ox = ir.left - cr.left;
-    const oy = ir.top  - cr.top;
-
-    const left0  = ox + data.rect.left   * scale;
-    const top0   = oy + data.rect.top    * scale;
-    const width0 = data.rect.width  * scale;
+    const iframeLeft = ir.left - cr.left;
+    const iframeTop = ir.top - cr.top;
+    const targetLeft = iframeLeft + data.rect.left * scale;
+    const targetTop = iframeTop + data.rect.top * scale;
+    const targetWidth = data.rect.width * scale;
+    const targetHeight = data.rect.height * scale;
+    const targetRight = targetLeft + targetWidth;
+    const targetBottom = targetTop + targetHeight;
 
     const containerW = containerRef.current.offsetWidth;
     const containerH = containerRef.current.offsetHeight;
     const ttW = tooltipRef.current.offsetWidth;
     const ttH = tooltipRef.current.offsetHeight;
-    const GAP = 10;
-    const PAD = 6;
+    const GAP = 12;
+    const PAD = 8;
 
-    let left = left0 + width0 + GAP;
-    if (left + ttW > containerW - PAD) left = left0 - ttW - GAP;
-    left = Math.max(PAD, Math.min(left, containerW - ttW - PAD));
+    let left: number;
+    let top: number;
 
-    let top = top0;
-    if (top + ttH > containerH - PAD) top = containerH - ttH - PAD;
-    top = Math.max(PAD, top);
+    const centeredLeft = targetLeft + targetWidth / 2 - ttW / 2;
 
-    setTooltipPos({ left, top });
+    if (targetTop - PAD >= ttH + GAP) {
+      left = centeredLeft;
+      top = targetTop - ttH - GAP;
+    } else if (containerH - targetBottom - PAD >= ttH + GAP) {
+      left = centeredLeft;
+      top = targetBottom + GAP;
+    } else if (containerW - targetRight - PAD >= ttW + GAP) {
+      left = targetRight + GAP;
+      top = targetTop;
+    } else if (targetLeft - PAD >= ttW + GAP) {
+      left = targetLeft - ttW - GAP;
+      top = targetTop;
+    } else {
+      left = centeredLeft;
+      top = targetTop - ttH - GAP;
+    }
+
+    setTooltipPos({
+      left: Math.max(PAD, Math.min(left, containerW - ttW - PAD)),
+      top: Math.max(PAD, Math.min(top, containerH - ttH - PAD)),
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, scale]);
 
   if (!data) return null;
-
-  const hasShadow = !!data.boxShadow && data.boxShadow !== "none";
-  const hasOverflow =
-    ss(data.overflow, "visible") !== "visible" ||
-    ss(data.overflowX, "visible") !== "visible" ||
-    ss(data.overflowY, "visible") !== "visible";
-  const hasTransform = !!data.transform && data.transform !== "";
-  const showFlex = !!data.isFlexContainer;
-  const showGrid = !!data.isGridContainer;
-  const showFlexItem = !!data.isInFlex;
-  const showGridItem = !!data.isInGrid;
 
   return (
     <div
       ref={tooltipRef}
-      className={`absolute z-50 w-[280px] overflow-hidden rounded-xl border shadow-2xl ${
+      className={`absolute z-50 w-[220px] overflow-hidden rounded-lg border shadow-xl ${
         dark
           ? "border-white/15 bg-[#1a1f2e]"
-          : "border-slate-200/80 bg-white shadow-[0_8px_32px_rgba(0,0,0,0.16)]"
+          : "border-slate-200/80 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.14)]"
       }`}
       style={{ left: tooltipPos.left, top: tooltipPos.top }}
     >
       {/* Header */}
-      <div className={`flex items-start justify-between gap-2 border-b px-3 py-2 ${dark ? "border-white/10 bg-white/[0.03]" : "border-slate-100 bg-slate-50/80"}`}>
+      <div className={`flex items-start justify-between gap-2 border-b px-2.5 py-2 ${dark ? "border-white/10 bg-white/[0.03]" : "border-slate-100 bg-slate-50/80"}`}>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <MousePointer2 size={11} className={`shrink-0 ${dark ? "text-blue-400" : "text-blue-500"}`} />
@@ -426,10 +271,10 @@ export function ElementInspectOverlay({
         )}
       </div>
 
-      <div className="max-h-[min(460px,62vh)] space-y-3 overflow-y-auto p-3">
+      <div className="space-y-2 p-2.5">
 
         {/* ── 1. Size (quick glance) ── */}
-        <div className={`flex items-baseline gap-2 rounded-lg border px-3 py-2 ${dark ? "border-white/10 bg-white/[0.03]" : "border-slate-100 bg-slate-50"}`}>
+        <div className={`flex items-baseline gap-2 rounded border px-2 py-1.5 ${dark ? "border-white/10 bg-white/[0.03]" : "border-slate-100 bg-slate-50"}`}>
           <span className={`text-[9px] font-black uppercase tracking-widest ${dark ? "text-slate-500" : "text-slate-400"}`}>size</span>
           <span className={`font-mono text-[13px] font-bold ${dark ? "text-slate-100" : "text-slate-900"}`}>
             {Math.round(sn(data.width))} × {Math.round(sn(data.height))}
@@ -437,123 +282,19 @@ export function ElementInspectOverlay({
           <span className={`ml-auto text-[10px] font-semibold ${dark ? "text-slate-500" : "text-slate-400"}`}>{ss(data.display)}</span>
         </div>
 
-        {/* ── 2. Colors ── */}
-        <Section label="Colors" dark={dark}>
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-1.5">
-              <span className={`w-6 shrink-0 text-right text-[10px] font-semibold ${dark ? "text-slate-500" : "text-slate-400"}`}>text</span>
-              <ColorSwatch hex={ss(data.colorHex || data.color, "#000000")} dark={dark} />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className={`w-6 shrink-0 text-right text-[10px] font-semibold ${dark ? "text-slate-500" : "text-slate-400"}`}>bg</span>
-              <ColorSwatch hex={ss(data.backgroundColorHex || data.backgroundColor, "#ffffff")} dark={dark} />
-            </div>
-            {data.borderColorHex && ss(data.borderWidth, "0px") !== "0px" && (
-              <div className="flex items-center gap-1.5">
-                <span className={`w-6 shrink-0 text-right text-[10px] font-semibold ${dark ? "text-slate-500" : "text-slate-400"}`}>bdr</span>
-                <ColorSwatch hex={ss(data.borderColorHex)} dark={dark} />
-              </div>
-            )}
-          </div>
-        </Section>
-
-        {/* ── 3. Typography ── */}
         <Section label="Typography" dark={dark}>
           <div className="space-y-0.5">
-            <p className="truncate font-mono text-[10px]" title={ss(data.fontFamily)}>
-              <span className={`font-semibold ${dark ? "text-slate-500" : "text-slate-400"}`}>family </span>
-              <span className={dark ? "text-slate-200" : "text-slate-700"}>{ss(data.fontFamily)}</span>
-            </p>
-            <Row label="size  " value={ss(data.fontSize)} dark={dark} />
-            <Row label="weight" value={ss(data.fontWeight)} dark={dark} />
-            <Row label="lh    " value={ss(data.lineHeight)} dark={dark} />
-            {data.letterSpacing && data.letterSpacing !== "normal" && <Row label="ls    " value={ss(data.letterSpacing)} dark={dark} />}
-            {data.textAlign && data.textAlign !== "start" && <Row label="align " value={ss(data.textAlign)} dark={dark} />}
+            <Row label="Font size" value={ss(data.fontSize)} dark={dark} />
+            <Row label="Font weight" value={ss(data.fontWeight)} dark={dark} />
+            <Row label="Line height" value={ss(data.lineHeight)} dark={dark} />
+            {data.letterSpacing && data.letterSpacing !== "normal" && <Row label="Letter gap" value={ss(data.letterSpacing)} dark={dark} />}
+            {data.textAlign && data.textAlign !== "start" && <Row label="Text align" value={ss(data.textAlign)} dark={dark} />}
           </div>
         </Section>
 
-        {/* ── 4. Layout (position, radius, z-index, overflow, transform) ── */}
-        <Section label="Layout" dark={dark}>
-          <div className="space-y-0.5">
-            <Row label="position" value={ss(data.position)} dark={dark} />
-            {ss(data.borderRadius, "0px") !== "0px" && <Row label="radius  " value={ss(data.borderRadius)} dark={dark} />}
-            {ss(data.opacity, "1") !== "1" && <Row label="opacity " value={ss(data.opacity)} dark={dark} />}
-            {ss(data.zIndex, "auto") !== "auto" && <Row label="z-index " value={ss(data.zIndex)} dark={dark} />}
-            {hasShadow && (
-              <Row
-                label="shadow  "
-                value={data.boxShadow.length > 32 ? `${data.boxShadow.slice(0, 32)}…` : data.boxShadow}
-                dark={dark}
-              />
-            )}
-            {hasOverflow && <Row label="overflow" value={data.overflow !== data.overflowX ? `x:${ss(data.overflowX)} y:${ss(data.overflowY)}` : ss(data.overflow)} dark={dark} />}
-            {hasTransform && <Row label="transform" value={data.transform.length > 36 ? `${data.transform.slice(0, 36)}…` : data.transform} dark={dark} />}
-          </div>
-        </Section>
-
-        {/* ── 5. Flex / Grid ── */}
-        {showFlex && (
-          <Section label="Flex (container)" dark={dark}>
-            <div className="space-y-0.5">
-              <Row label="direction" value={ss(data.flexDirection)} dark={dark} />
-              {ss(data.flexWrap) !== "nowrap" && <Row label="wrap     " value={ss(data.flexWrap)} dark={dark} />}
-              <Row label="justify  " value={ss(data.justifyContent)} dark={dark} />
-              <Row label="align    " value={ss(data.alignItems)} dark={dark} />
-              {data.gap && ss(data.gap) !== "0px" && <Row label="gap      " value={ss(data.gap)} dark={dark} />}
-            </div>
-          </Section>
-        )}
-        {showGrid && (
-          <Section label="Grid (container)" dark={dark}>
-            <div className="space-y-0.5">
-              {data.gridTemplateColumns && <Row label="columns" value={ss(data.gridTemplateColumns).length > 30 ? `${ss(data.gridTemplateColumns).slice(0, 30)}…` : ss(data.gridTemplateColumns)} dark={dark} />}
-              {data.gridTemplateRows && <Row label="rows   " value={ss(data.gridTemplateRows).length > 30 ? `${ss(data.gridTemplateRows).slice(0, 30)}…` : ss(data.gridTemplateRows)} dark={dark} />}
-              {data.gap && ss(data.gap) !== "0px" && <Row label="gap    " value={ss(data.gap)} dark={dark} />}
-            </div>
-          </Section>
-        )}
-        {showFlexItem && !showFlex && (
-          <Section label="Flex (item)" dark={dark}>
-            <div className="space-y-0.5">
-              {ss(data.flexGrow) !== "0" && <Row label="grow  " value={ss(data.flexGrow)} dark={dark} />}
-              {ss(data.flexShrink) !== "1" && <Row label="shrink" value={ss(data.flexShrink)} dark={dark} />}
-              {ss(data.flexBasis) !== "auto" && <Row label="basis " value={ss(data.flexBasis)} dark={dark} />}
-              {ss(data.alignSelf) !== "auto" && <Row label="self  " value={ss(data.alignSelf)} dark={dark} />}
-            </div>
-          </Section>
-        )}
-        {showGridItem && !showGrid && (
-          <Section label="Grid (item)" dark={dark}>
-            <div className="space-y-0.5">
-              {data.gridColumn && ss(data.gridColumn) !== "auto" && <Row label="col" value={ss(data.gridColumn)} dark={dark} />}
-              {data.gridRow && ss(data.gridRow) !== "auto" && <Row label="row" value={ss(data.gridRow)} dark={dark} />}
-              {data.alignSelf && ss(data.alignSelf) !== "auto" && <Row label="self" value={ss(data.alignSelf)} dark={dark} />}
-            </div>
-          </Section>
-        )}
-
-        {/* ── 6. Box model diagram (middle) ── */}
         <Section label="Box model" dark={dark}>
           <BoxModelDiagram data={data} dark={dark} />
         </Section>
-
-        {/* ── 7. Classes ── */}
-        {data.classes.length > 0 && (
-          <Section label="Classes" dark={dark}>
-            <div className="flex flex-wrap gap-1">
-              {data.classes.map((cls) => (
-                <CopyableChip key={cls} value={`.${cls}`} dark={dark} />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {/* ── 8. Copy as CSS ── */}
-        {data.cssSnippet && (
-          <Section label="Copy as CSS" dark={dark}>
-            <CopyableBlock label="CSS snippet" value={data.cssSnippet} dark={dark} />
-          </Section>
-        )}
       </div>
     </div>
   );
