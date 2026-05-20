@@ -3,11 +3,13 @@ import { defaultDeviceIds, devices } from "../domain/device/device-catalog";
 import { supportsOrientation } from "../domain/device/device-service";
 import { createPreviewSlot, maxPreviewSlots, nextZoom, normalizeUrl } from "../domain/simulator/simulator-service";
 import type { DisplaySettings, PreviewSlot, SimulatorState } from "../domain/simulator/simulator.types";
+import { readStore, writeStore } from "../infrastructure/storage/local-store";
 
 interface SimulatorContextValue extends SimulatorState {
   setActiveSlot: (slotId: string) => void;
   setSlotDevice: (slotId: string, deviceId: string) => void;
   setSlotUrl: (slotId: string, url: string) => void;
+  setAllSlotsUrl: (url: string) => void;
   rotateSlot: (slotId: string) => void;
   zoomSlot: (slotId: string, direction: "in" | "out") => void;
   setSlotZoomMode: (slotId: string, zoomMode: PreviewSlot["zoomMode"]) => void;
@@ -18,6 +20,7 @@ interface SimulatorContextValue extends SimulatorState {
   removeSlot: (slotId: string) => void;
   duplicateActiveSlot: (deviceId?: string) => void;
   updateDisplay: (display: DisplaySettings | ((current: DisplaySettings) => DisplaySettings)) => void;
+  useCount: number;
 }
 
 const SimulatorContext = createContext<SimulatorContextValue | null>(null);
@@ -29,7 +32,8 @@ const defaultDisplay: DisplaySettings = {
   scrollSync: false,
   darkMode: false,
   presentationMode: false,
-  hideChrome: false
+  hideChrome: false,
+  inspectMode: false
 };
 
 function initialUrlFromSearch() {
@@ -49,6 +53,16 @@ export function SimulatorProvider({ children }: { children: ReactNode }) {
   });
   const [activeSlotId, setActiveSlotId] = useState(slots[0].id);
   const [display, setDisplay] = useState(defaultDisplay);
+  const [useCount, setUseCount] = useState(0);
+
+  // Load + increment use count on mount
+  useEffect(() => {
+    void readStore<number>("mdvUseCount", 0).then((count) => {
+      const next = count + 1;
+      setUseCount(next);
+      void writeStore("mdvUseCount", next);
+    });
+  }, []);
 
   const updateSlot = useCallback(
     (slotId: string, updater: (slot: PreviewSlot) => PreviewSlot) => {
@@ -84,6 +98,13 @@ export function SimulatorProvider({ children }: { children: ReactNode }) {
   const setSlotUrl = useCallback((slotId: string, url: string) => {
     updateSlot(slotId, (slot) => ({ ...slot, url: normalizeUrl(url), reloadToken: slot.reloadToken + 1 }));
   }, [updateSlot]);
+
+  const setAllSlotsUrl = useCallback((url: string) => {
+    const normalized = normalizeUrl(url);
+    setSlots((current) =>
+      current.map((slot) => ({ ...slot, url: normalized, reloadToken: slot.reloadToken + 1 }))
+    );
+  }, []);
 
   const rotateSlot = useCallback((slotId: string) => {
     updateSlot(slotId, (slot) => {
@@ -169,9 +190,7 @@ export function SimulatorProvider({ children }: { children: ReactNode }) {
   }, [activeSlotId]);
 
   // Listen for LOAD_URL messages sent by the background service worker when the
-  // extension icon is clicked while a simulator tab is already open. Using
-  // message passing avoids the unreliable "navigate-existing-tab + page reload"
-  // approach and lets the React state update without a full page reload.
+  // extension icon is clicked while a simulator tab is already open.
   useEffect(() => {
     if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) return;
 
@@ -198,9 +217,11 @@ export function SimulatorProvider({ children }: { children: ReactNode }) {
       slots,
       activeSlotId,
       display,
+      useCount,
       setActiveSlot,
       setSlotDevice,
       setSlotUrl,
+      setAllSlotsUrl,
       rotateSlot,
       zoomSlot,
       setSlotZoomMode,
@@ -223,11 +244,13 @@ export function SimulatorProvider({ children }: { children: ReactNode }) {
       removeSlot,
       rotateSlot,
       setActiveSlot,
+      setAllSlotsUrl,
       setSlotDevice,
       setSlotUrl,
       setSlotZoomMode,
       slots,
       updateDisplay,
+      useCount,
       zoomSlot
     ]
   );

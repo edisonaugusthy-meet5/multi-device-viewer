@@ -1,11 +1,29 @@
-import { Camera, ChevronDown, ExternalLink, Info, Minus, Plus, RefreshCw, RotateCw, X } from "lucide-react";
+import {
+  Camera,
+  ChevronDown,
+  ExternalLink,
+  Info,
+  Minus,
+  Plus,
+  RefreshCw,
+  RotateCw,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { mediaQueryFor, supportsOrientation, toLandscapeAwareSize } from "../../domain/device/device-service";
+import {
+  mediaQueryFor,
+  supportsOrientation,
+  toLandscapeAwareSize,
+} from "../../domain/device/device-service";
 import type { Device, Size } from "../../domain/device/device.types";
-import type { DisplaySettings, PreviewSlot } from "../../domain/simulator/simulator.types";
+import type {
+  DisplaySettings,
+  PreviewSlot,
+} from "../../domain/simulator/simulator.types";
 import { useSimulator } from "../../app/SimulatorProvider";
 import { useDeviceCatalog } from "../../app/DeviceCatalogProvider";
 import { DeviceFrame, estimateDeviceFrameSize } from "./DeviceFrame";
+import { ElementInspectOverlay, type InspectData } from "./ElementInspectOverlay";
 
 const CARD_PAD = 32;
 interface ScrollSyncPayload {
@@ -28,17 +46,39 @@ interface PreviewCardProps {
 
 type BridgeStatus = "checking" | "ready" | "unavailable" | "blocked";
 
-export function PreviewCard({ slot, device, display, removable, onCapture }: PreviewCardProps) {
+export function PreviewCard({
+  slot,
+  device,
+  display,
+  removable,
+  onCapture,
+}: PreviewCardProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const bridgeStatusTimer = useRef<number | undefined>(undefined);
   const bridgeStatusRef = useRef<BridgeStatus>("checking");
-  const [containerSize, setContainerSize] = useState<Size>({ width: 0, height: 0 });
+  const [containerSize, setContainerSize] = useState<Size>({
+    width: 0,
+    height: 0,
+  });
   const [blocked, setBlocked] = useState(false);
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>("checking");
   const [scrollMeta, setScrollMeta] = useState<ScrollSyncPayload | null>(null);
   const [inspectOpen, setInspectOpen] = useState(false);
-  const { setActiveSlot, removeSlot, rotateSlot, zoomSlot, setSlotDevice, reloadSlot } = useSimulator();
+  const [inspectData, setInspectData] = useState<InspectData | null>(null);
+  const [inspectLocked, setInspectLocked] = useState(false);
+  const inspectLockedRef = useRef(false);
+  // Direct DOM ref for the highlight box — updated imperatively on every MDV_INSPECT_MOVE
+  // to avoid React re-renders on every mousemove frame.
+  const highlightRef = useRef<HTMLDivElement | null>(null);
+  const {
+    setActiveSlot,
+    removeSlot,
+    rotateSlot,
+    zoomSlot,
+    setSlotDevice,
+    reloadSlot,
+  } = useSimulator();
 
   const canRotate = supportsOrientation(device);
   const viewportSize = canRotate
@@ -55,11 +95,17 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
 
   const availW = Math.max(80, containerSize.width - CARD_PAD);
   const availH = Math.max(80, containerSize.height - CARD_PAD);
-  const fitScale = Math.min(1, availW / frameSize.width, availH / frameSize.height);
+  const fitScale = Math.min(
+    1,
+    availW / frameSize.width,
+    availH / frameSize.height,
+  );
   const scale =
-    slot.zoomMode === "actual" ? 1
-    : slot.zoomMode === "fit" ? fitScale
-    : fitScale * (slot.zoom / 0.58);
+    slot.zoomMode === "actual"
+      ? 1
+      : slot.zoomMode === "fit"
+        ? fitScale
+        : fitScale * (slot.zoom / 0.58);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -90,7 +136,10 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
 
     const register = () => {
       setBridgeStatus("checking");
-      iframe.contentWindow?.postMessage({ type: "MDV_PREVIEW_REGISTER", slotId: slot.id }, "*");
+      iframe.contentWindow?.postMessage(
+        { type: "MDV_PREVIEW_REGISTER", slotId: slot.id },
+        "*",
+      );
       window.clearTimeout(bridgeStatusTimer.current);
       bridgeStatusTimer.current = window.setTimeout(() => {
         if (bridgeStatusRef.current === "checking") {
@@ -146,17 +195,90 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
     const onSync = (event: Event) => {
       const detail = (event as CustomEvent<ScrollSyncPayload>).detail;
       if (!detail || detail.slotId === slot.id) return;
-      iframeRef.current?.contentWindow?.postMessage({
-        type: "MDV_APPLY_SCROLL_SYNC",
-        slotId: slot.id,
-        xRatio: detail.xRatio,
-        yRatio: detail.yRatio
-      }, "*");
+      iframeRef.current?.contentWindow?.postMessage(
+        {
+          type: "MDV_APPLY_SCROLL_SYNC",
+          slotId: slot.id,
+          xRatio: detail.xRatio,
+          yRatio: detail.yRatio,
+        },
+        "*",
+      );
     };
 
     window.addEventListener("MDV_SCROLL_SYNC_EVENT", onSync);
     return () => window.removeEventListener("MDV_SCROLL_SYNC_EVENT", onSync);
   }, [blocked, display.scrollSync, slot.id]);
+
+  // ── Inspect mode bridge ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!iframeRef.current) return;
+    iframeRef.current.contentWindow?.postMessage(
+      {
+        type: display.inspectMode ? "MDV_INSPECT_ENABLE" : "MDV_INSPECT_DISABLE",
+        slotId: slot.id,
+      },
+      "*",
+    );
+    if (!display.inspectMode) {
+      setInspectData(null);
+      inspectLockedRef.current = false;
+      setInspectLocked(false);
+      if (highlightRef.current) highlightRef.current.style.display = "none";
+    }
+  }, [display.inspectMode, slot.id]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const msg = event.data;
+      if (!msg || typeof msg !== "object" || msg.slotId !== slot.id) return;
+
+      // ── Hot path: just move the highlight box via direct DOM, zero React re-render ──
+      if (msg.type === "MDV_INSPECT_MOVE") {
+        if (inspectLockedRef.current) return;
+        const h = highlightRef.current;
+        const container = containerRef.current;
+        const iframe = iframeRef.current;
+        if (!h || !container || !iframe) return;
+        const cr = container.getBoundingClientRect();
+        const ir = iframe.getBoundingClientRect();
+        const ox = ir.left - cr.left;
+        const oy = ir.top - cr.top;
+        const r = msg.rect as { top: number; left: number; width: number; height: number };
+        // scale is captured from the closure — it's stable between renders
+        h.style.left   = `${ox + r.left   * scale}px`;
+        h.style.top    = `${oy + r.top    * scale}px`;
+        h.style.width  = `${Math.max(1, r.width  * scale)}px`;
+        h.style.height = `${Math.max(1, r.height * scale)}px`;
+        h.style.display = "block";
+        return;
+      }
+
+      // ── Element changed: update tooltip panel via React state ──
+      if (msg.type === "MDV_INSPECT_DATA") {
+        if (!inspectLockedRef.current) {
+          setInspectData(msg as unknown as InspectData);
+        }
+        return;
+      }
+
+      if (msg.type === "MDV_INSPECT_CLICK") {
+        if (inspectLockedRef.current) {
+          inspectLockedRef.current = false;
+          setInspectLocked(false);
+        } else {
+          setInspectData(msg as unknown as InspectData);
+          inspectLockedRef.current = true;
+          setInspectLocked(true);
+        }
+        return;
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [slot.id, scale]); // scale needed for coord math in the closure
 
   return (
     <section
@@ -168,7 +290,9 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
       {/* ── Per-card header ── */}
       <div
         className={`flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-2 py-1.5 transition-colors ${
-          display.darkMode ? "border-white/10 bg-[#151922]" : "border-black/[0.06] bg-white"
+          display.darkMode
+            ? "border-white/10 bg-[#151922]"
+            : "border-black/[0.06] bg-white"
         }`}
       >
         {/* Device switcher */}
@@ -178,24 +302,40 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
           onSwitch={(id) => setSlotDevice(slot.id, id)}
         />
 
-        <span className={`mx-1 h-4 w-px shrink-0 ${display.darkMode ? "bg-white/10" : "bg-slate-200"}`} />
+        <span
+          className={`mx-1 h-4 w-px shrink-0 ${display.darkMode ? "bg-white/10" : "bg-slate-200"}`}
+        />
 
         {/* Viewport dims */}
-        <span className={`shrink-0 text-[12px] font-medium tabular-nums ${display.darkMode ? "text-slate-400" : "text-slate-500"}`}>
+        <span
+          className={`shrink-0 text-[12px] font-medium tabular-nums ${display.darkMode ? "text-slate-400" : "text-slate-500"}`}
+        >
           {viewportSize.width}×{viewportSize.height}
         </span>
 
         <div className="min-w-3 flex-1" />
 
         {canRotate && (
-          <CardBtn dark={display.darkMode} label="Rotate" onClick={() => rotateSlot(slot.id)}>
+          <CardBtn
+            dark={display.darkMode}
+            label="Rotate"
+            onClick={() => rotateSlot(slot.id)}
+          >
             <RotateCw size={14} />
           </CardBtn>
         )}
-        <CardBtn dark={display.darkMode} label="Zoom out" onClick={() => zoomSlot(slot.id, "out")}>
+        <CardBtn
+          dark={display.darkMode}
+          label="Zoom out"
+          onClick={() => zoomSlot(slot.id, "out")}
+        >
           <Minus size={14} />
         </CardBtn>
-        <CardBtn dark={display.darkMode} label="Zoom in" onClick={() => zoomSlot(slot.id, "in")}>
+        <CardBtn
+          dark={display.darkMode}
+          label="Zoom in"
+          onClick={() => zoomSlot(slot.id, "in")}
+        >
           <Plus size={14} />
         </CardBtn>
         <CardBtn
@@ -206,7 +346,11 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
           <Info size={14} />
         </CardBtn>
         {removable && (
-          <CardBtn dark={display.darkMode} label="Remove" onClick={() => removeSlot(slot.id)}>
+          <CardBtn
+            dark={display.darkMode}
+            label="Remove"
+            onClick={() => removeSlot(slot.id)}
+          >
             <X size={14} />
           </CardBtn>
         )}
@@ -227,7 +371,7 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
       {/* ── Canvas ── */}
       <div
         ref={containerRef}
-        className={`flex flex-1 items-center justify-center overflow-hidden transition-colors ${display.darkMode ? "bg-[#101217]" : "bg-[#f5f5f3]"}`}
+        className={`relative flex flex-1 items-center justify-center overflow-hidden transition-colors ${display.darkMode ? "bg-[#101217]" : "bg-[#f5f5f3]"}`}
       >
         {containerSize.width > 0 && (
           <div
@@ -253,7 +397,12 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
               viewportSize={viewportSize}
               orientation={slot.orientation}
             >
-              <div style={{ width: viewportSize.width, height: viewportSize.height }}>
+              <div
+                style={{
+                  width: viewportSize.width,
+                  height: viewportSize.height,
+                }}
+              >
                 {blocked ? (
                   <BlockedView
                     url={slot.url}
@@ -270,7 +419,9 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
                     style={{
                       backgroundColor: display.darkMode ? "#0f172a" : "#ffffff",
                       colorScheme: display.darkMode ? "dark" : "light",
-                      filter: display.darkMode ? "invert(1) hue-rotate(180deg)" : undefined,
+                      filter: display.darkMode
+                        ? "invert(1) hue-rotate(180deg)"
+                        : undefined,
                     }}
                     sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
                     onError={() => setBlocked(true)}
@@ -280,21 +431,60 @@ export function PreviewCard({ slot, device, display, removable, onCapture }: Pre
             </DeviceFrame>
           </div>
         )}
+
+        {/* Inspect highlight box — driven imperatively via highlightRef, no React re-render on move */}
+        {display.inspectMode && (
+          <div
+            ref={highlightRef}
+            className="pointer-events-none absolute rounded-[2px] border-2 border-blue-500"
+            style={{
+              display: "none",
+              background: "rgba(59,130,246,0.07)",
+              boxShadow: "0 0 0 1px rgba(59,130,246,0.3)",
+              zIndex: 40,
+            }}
+          />
+        )}
+
+        {/* Inspect tooltip panel — only re-renders when element changes */}
+        {display.inspectMode && (
+          <ElementInspectOverlay
+            data={inspectData}
+            locked={inspectLocked}
+            scale={scale}
+            dark={display.darkMode}
+            containerRef={containerRef}
+            iframeRef={iframeRef}
+          />
+        )}
       </div>
     </section>
   );
 }
 
 function broadcastScrollSync(detail: ScrollSyncPayload) {
-  window.dispatchEvent(new CustomEvent<ScrollSyncPayload>("MDV_SCROLL_SYNC_EVENT", { detail }));
+  window.dispatchEvent(
+    new CustomEvent<ScrollSyncPayload>("MDV_SCROLL_SYNC_EVENT", { detail }),
+  );
 }
 
 // ─── Device switcher ──────────────────────────────────────────────────────────
 
-const TYPE_ORDER = ["phone", "tablet", "laptop", "desktop", "tv", "watch"] as const;
+const TYPE_ORDER = [
+  "phone",
+  "tablet",
+  "laptop",
+  "desktop",
+  "tv",
+  "watch",
+] as const;
 const TYPE_LABEL: Record<string, string> = {
-  phone: "Phones", tablet: "Tablets", laptop: "Laptops",
-  desktop: "Desktops", tv: "TV", watch: "Watch",
+  phone: "Phones",
+  tablet: "Tablets",
+  laptop: "Laptops",
+  desktop: "Desktops",
+  tv: "TV",
+  watch: "Watch",
 };
 const POPULAR_DEVICE_IDS = [
   "apple-iphone-14-pro-max-2022",
@@ -302,10 +492,18 @@ const POPULAR_DEVICE_IDS = [
   "samsung-galaxy-s24",
   "samsung-galaxy-s24-ultra",
   "apple-ipad-air-4",
-  "macbook-air"
+  "macbook-air",
 ];
 
-function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Device; dark: boolean; onSwitch: (id: string) => void }) {
+function DeviceSwitcher({
+  currentDevice,
+  dark,
+  onSwitch,
+}: {
+  currentDevice: Device;
+  dark: boolean;
+  onSwitch: (id: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -318,7 +516,8 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -352,7 +551,7 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
     const q = query.trim().toLowerCase();
     if (!q) return devices;
     return devices.filter((d) =>
-      [d.name, d.brand, d.family, d.type].join(" ").toLowerCase().includes(q)
+      [d.name, d.brand, d.family, d.type].join(" ").toLowerCase().includes(q),
     );
   }, [devices, query]);
 
@@ -377,7 +576,9 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
     }
 
     for (const t of TYPE_ORDER) {
-      const list = filtered.filter((device) => device.type === t && !used.has(device.id));
+      const list = filtered.filter(
+        (device) => device.type === t && !used.has(device.id),
+      );
       if (list.length > 0) sections.push([TYPE_LABEL[t], list]);
     }
 
@@ -389,13 +590,23 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
       <button
         type="button"
         data-testid="device-switcher-button"
-        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
         className={`flex h-9 w-full min-w-0 items-center gap-2 rounded-[8px] border px-2.5 text-[13px] font-semibold transition ${
-          dark ? "border-white/10 bg-white/[0.04] text-white hover:bg-white/[0.08]" : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100"
+          dark
+            ? "border-white/10 bg-white/[0.04] text-white hover:bg-white/[0.08]"
+            : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100"
         }`}
       >
-        <span className="min-w-0 flex-1 truncate">{shortName(currentDevice.name)}</span>
-        <ChevronDown size={14} className={`shrink-0 ${dark ? "text-slate-400" : "text-slate-500"}`} />
+        <span className="min-w-0 flex-1 truncate">
+          {shortName(currentDevice.name)}
+        </span>
+        <ChevronDown
+          size={14}
+          className={`shrink-0 ${dark ? "text-slate-400" : "text-slate-500"}`}
+        />
       </button>
 
       {open && (
@@ -407,7 +618,9 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
           onClick={(e) => e.stopPropagation()}
         >
           {/* Search */}
-          <div className={`border-b px-3 py-2.5 ${dark ? "border-white/10" : "border-slate-100"}`}>
+          <div
+            className={`border-b px-3 py-2.5 ${dark ? "border-white/10" : "border-slate-100"}`}
+          >
             <input
               ref={inputRef}
               value={query}
@@ -421,28 +634,41 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
           <div ref={listRef} className="max-h-[420px] overflow-y-auto py-2">
             {grouped.map(([type, list]) => (
               <div key={type}>
-                <p className={`px-3 pb-1 pt-2 text-[10px] font-black uppercase tracking-widest ${dark ? "text-slate-500" : "text-slate-400"}`}>
+                <p
+                  className={`px-3 pb-1 pt-2 text-[10px] font-black uppercase tracking-widest ${dark ? "text-slate-500" : "text-slate-400"}`}
+                >
                   {type}
                 </p>
                 <div className="grid grid-cols-1 gap-1 px-2 min-[420px]:grid-cols-2">
                   {list.map((d) => (
                     <button
                       key={d.id}
-                      ref={d.id === currentDevice.id ? activeItemRef : undefined}
+                      ref={
+                        d.id === currentDevice.id ? activeItemRef : undefined
+                      }
                       type="button"
                       className={`flex min-h-12 w-full items-center gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${
                         d.id === currentDevice.id
                           ? "bg-slate-900 text-white hover:bg-slate-800"
-                          : dark ? "text-slate-200 hover:bg-white/[0.07]" : "text-slate-700 hover:bg-slate-50"
+                          : dark
+                            ? "text-slate-200 hover:bg-white/[0.07]"
+                            : "text-slate-700 hover:bg-slate-50"
                       }`}
-                      onClick={() => { addRecent(d.id); onSwitch(d.id); setOpen(false); }}
+                      onClick={() => {
+                        addRecent(d.id);
+                        onSwitch(d.id);
+                        setOpen(false);
+                      }}
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12px] font-semibold leading-tight">
                           {shortName(d.name)}
                         </span>
-                        <span className={`mt-0.5 block text-[10px] ${d.id === currentDevice.id ? "text-white/60" : dark ? "text-slate-500" : "text-slate-400"}`}>
-                          {d.cssViewport.width}×{d.cssViewport.height} · {d.brand}
+                        <span
+                          className={`mt-0.5 block text-[10px] ${d.id === currentDevice.id ? "text-white/60" : dark ? "text-slate-500" : "text-slate-400"}`}
+                        >
+                          {d.cssViewport.width}×{d.cssViewport.height} ·{" "}
+                          {d.brand}
                         </span>
                       </span>
                     </button>
@@ -451,7 +677,9 @@ function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Devi
               </div>
             ))}
             {grouped.length === 0 && (
-              <p className="px-3 py-4 text-center text-[11px] text-slate-400">No results</p>
+              <p className="px-3 py-4 text-center text-[11px] text-slate-400">
+                No results
+              </p>
             )}
           </div>
         </div>
@@ -479,30 +707,65 @@ function InspectPanel({
   slot: PreviewSlot;
   viewportSize: Size;
 }) {
-  const scrollPercent = scrollMeta ? `${Math.round(scrollMeta.yRatio * 100)}%` : "Unknown";
+  const scrollPercent = scrollMeta
+    ? `${Math.round(scrollMeta.yRatio * 100)}%`
+    : "Unknown";
   const statusText =
-    bridgeStatus === "ready" ? "Ready" :
-    bridgeStatus === "checking" ? "Checking" :
-    bridgeStatus === "blocked" ? "Blocked" :
-    "Unavailable";
+    bridgeStatus === "ready"
+      ? "Ready"
+      : bridgeStatus === "checking"
+        ? "Checking"
+        : bridgeStatus === "blocked"
+          ? "Blocked"
+          : "Unavailable";
 
   return (
-    <div className={`grid shrink-0 gap-2 border-b px-3 py-2 text-[11px] ${
-      dark ? "border-white/10 bg-[#111827] text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600"
-    }`}>
+    <div
+      className={`grid shrink-0 gap-2 border-b px-3 py-2 text-[11px] ${
+        dark
+          ? "border-white/10 bg-[#111827] text-slate-300"
+          : "border-slate-200 bg-slate-50 text-slate-600"
+      }`}
+    >
       <div className="grid grid-cols-2 gap-2 min-[920px]:grid-cols-4">
-        <InspectMetric label="Device" value={shortName(device.name)} dark={dark} />
-        <InspectMetric label="Viewport" value={`${viewportSize.width}×${viewportSize.height}`} dark={dark} />
-        <InspectMetric label="DPR" value={`${device.pixelRatio}x`} dark={dark} />
-        <InspectMetric label="Orientation" value={slot.orientation} dark={dark} />
-        <InspectMetric label="Chrome" value={display.showUrlBar ? "Visible" : "Hidden"} dark={dark} />
-        <InspectMetric label="Frame" value={slot.showFrame ? "Visible" : "Hidden"} dark={dark} />
+        <InspectMetric
+          label="Device"
+          value={shortName(device.name)}
+          dark={dark}
+        />
+        <InspectMetric
+          label="Viewport"
+          value={`${viewportSize.width}×${viewportSize.height}`}
+          dark={dark}
+        />
+        <InspectMetric
+          label="DPR"
+          value={`${device.pixelRatio}x`}
+          dark={dark}
+        />
+        <InspectMetric
+          label="Orientation"
+          value={slot.orientation}
+          dark={dark}
+        />
+        <InspectMetric
+          label="Chrome"
+          value={display.showUrlBar ? "Visible" : "Hidden"}
+          dark={dark}
+        />
+        <InspectMetric
+          label="Frame"
+          value={slot.showFrame ? "Visible" : "Hidden"}
+          dark={dark}
+        />
         <InspectMetric label="Sync bridge" value={statusText} dark={dark} />
         <InspectMetric label="Scroll" value={scrollPercent} dark={dark} />
       </div>
-      <code className={`block truncate rounded px-2 py-1 font-semibold ${
-        dark ? "bg-white/5 text-slate-300" : "bg-white text-slate-600"
-      }`}>
+      <code
+        className={`block truncate rounded px-2 py-1 font-semibold ${
+          dark ? "bg-white/5 text-slate-300" : "bg-white text-slate-600"
+        }`}
+      >
         {mediaQueryFor(device, slot.orientation)}
       </code>
       <p className="truncate font-medium">{slot.url}</p>
@@ -510,24 +773,53 @@ function InspectPanel({
   );
 }
 
-function InspectMetric({ dark, label, value }: { dark: boolean; label: string; value: string }) {
+function InspectMetric({
+  dark,
+  label,
+  value,
+}: {
+  dark: boolean;
+  label: string;
+  value: string;
+}) {
   return (
-    <div className={`rounded-md border px-2 py-1.5 ${
-      dark ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white"
-    }`}>
-      <p className="font-black uppercase tracking-[0.08em] text-slate-400">{label}</p>
-      <p className={`mt-0.5 truncate font-bold ${dark ? "text-slate-100" : "text-slate-900"}`}>{value}</p>
+    <div
+      className={`rounded-md border px-2 py-1.5 ${
+        dark ? "border-white/10 bg-white/[0.03]" : "border-slate-200 bg-white"
+      }`}
+    >
+      <p className="font-black uppercase tracking-[0.08em] text-slate-400">
+        {label}
+      </p>
+      <p
+        className={`mt-0.5 truncate font-bold ${dark ? "text-slate-100" : "text-slate-900"}`}
+      >
+        {value}
+      </p>
     </div>
   );
 }
 
-function BlockedView({ onCapture, onReload, url }: { onCapture: () => void; onReload: () => void; url: string }) {
+function BlockedView({
+  onCapture,
+  onReload,
+  url,
+}: {
+  onCapture: () => void;
+  onReload: () => void;
+  url: string;
+}) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 bg-slate-50 p-6 text-center">
-      <p className="text-sm font-black text-slate-900">This site blocks iframe preview.</p>
-      <p className="max-w-[250px] break-all text-[11px] font-semibold leading-5 text-slate-500">{url}</p>
+      <p className="text-sm font-black text-slate-900">
+        This site blocks iframe preview.
+      </p>
+      <p className="max-w-[250px] break-all text-[11px] font-semibold leading-5 text-slate-500">
+        {url}
+      </p>
       <p className="max-w-[260px] text-xs leading-5 text-slate-500">
-        The page likely keeps frame protection, uses a restricted browser URL, or prevented the preview bridge from loading.
+        The page likely keeps frame protection, uses a restricted browser URL,
+        or prevented the preview bridge from loading.
       </p>
       <div className="grid w-full max-w-[240px] gap-2">
         <button
@@ -553,16 +845,31 @@ function BlockedView({ onCapture, onReload, url }: { onCapture: () => void; onRe
   );
 }
 
-function CardBtn({ dark, label, children, onClick }: { dark: boolean; label: string; children: ReactNode; onClick: () => void }) {
+function CardBtn({
+  dark,
+  label,
+  children,
+  onClick,
+}: {
+  dark: boolean;
+  label: string;
+  children: ReactNode;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       title={label}
       aria-label={label}
       className={`grid h-8 w-8 shrink-0 place-items-center rounded-md transition ${
-        dark ? "text-slate-400 hover:bg-white/10 hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+        dark
+          ? "text-slate-400 hover:bg-white/10 hover:text-white"
+          : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
       }`}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
     >
       {children}
     </button>
