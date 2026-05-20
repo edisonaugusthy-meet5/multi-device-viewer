@@ -1,14 +1,45 @@
-import { Camera, Check, Crosshair, Link2, LayoutGrid, Moon, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, RectangleHorizontal, RotateCw, Signal, Sun, X } from "lucide-react";
+import {
+  Camera,
+  Check,
+  Crosshair,
+  LayoutGrid,
+  Link2,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelsTopLeft,
+  Plus,
+  RectangleHorizontal,
+  RotateCw,
+  Signal,
+  Star,
+  Sun,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useDeviceCatalog } from "../../app/DeviceCatalogProvider";
 import { useSimulator } from "../../app/SimulatorProvider";
 import { captureTabWithOverlay } from "../../domain/capture/capture-service";
+import { normalizeUrl } from "../../domain/simulator/simulator-service";
 import { PreviewCard } from "./PreviewCard";
 import { AnnotationOverlay } from "./AnnotationOverlay";
+import { CustomDeviceModal } from "./CustomDeviceModal";
+import { PresetsManager } from "./PresetsManager";
 
 export function SimulatorApp() {
   const { findDevice } = useDeviceCatalog();
-  const { slots, display, activeSlotId, addSlot, applyDevicePreset, reloadAllSlots, updateDisplay } = useSimulator();
+  const {
+    slots,
+    display,
+    activeSlotId,
+    addSlot,
+    applyDevicePreset,
+    reloadAllSlots,
+    updateDisplay,
+    setAllSlotsUrl,
+    useCount,
+  } = useSimulator();
+
   const [annotationOpen, setAnnotationOpen] = useState(false);
   const [annotationImage, setAnnotationImage] = useState<string | undefined>();
   const [capturing, setCapturing] = useState(false);
@@ -18,6 +49,28 @@ export function SimulatorApp() {
   const [narrowLayout, setNarrowLayout] = useState(() => (
     typeof window === "undefined" ? false : window.innerWidth <= 720
   ));
+  const [showCustomDevice, setShowCustomDevice] = useState(false);
+  const [showPresetsSection, setShowPresetsSection] = useState(false);
+  const [showReviewBanner, setShowReviewBanner] = useState(false);
+
+  // Show review prompt after 5 uses (only once)
+  useEffect(() => {
+    if (useCount < 5) return;
+    void import("../../infrastructure/storage/local-store").then(({ readStore }) => {
+      void readStore<boolean>("mdvReviewDismissed", false).then((dismissed) => {
+        if (!dismissed) setShowReviewBanner(true);
+      });
+    });
+  }, [useCount]);
+
+  function dismissReview(permanent: boolean) {
+    setShowReviewBanner(false);
+    if (permanent) {
+      void import("../../infrastructure/storage/local-store").then(({ writeStore }) => {
+        void writeStore("mdvReviewDismissed", true);
+      });
+    }
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -31,6 +84,33 @@ export function SimulatorApp() {
     return () => query.removeEventListener("change", syncSmallScreenLayout);
   }, []);
 
+  // ── URL bar state ─────────────────────────────────────────────────────────
+  const activeSlot = slots.find((s) => s.id === activeSlotId) ?? slots[0];
+  const [urlDraft, setUrlDraft] = useState(activeSlot?.url ?? "");
+
+  // Keep draft in sync when active slot URL changes (e.g. after Apply)
+  useEffect(() => {
+    setUrlDraft(activeSlot?.url ?? "");
+  }, [activeSlot?.url]);
+
+  function applyUrl(raw: string) {
+    const normalized = normalizeUrl(raw);
+    setUrlDraft(normalized);
+    setAllSlotsUrl(normalized);
+  }
+
+  function handleUrlKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      applyUrl(urlDraft);
+    }
+    if (e.key === "Escape") {
+      setUrlDraft(activeSlot?.url ?? "");
+      (e.target as HTMLInputElement).blur();
+    }
+  }
+
+  // ── Screenshots ───────────────────────────────────────────────────────────
   async function takeScreenshot() {
     if (capturing) return;
     setCapturing(true);
@@ -52,11 +132,10 @@ export function SimulatorApp() {
     })
   };
 
-  // ── Resizable panel widths (percentages, always sum to 100) ──────────────
+  // ── Resizable panel widths ────────────────────────────────────────────────
   const [widths, setWidths] = useState<number[]>(() =>
     slots.map(() => 100 / slots.length)
   );
-  // Keep widths in sync when slots are added/removed
   const prevSlotCount = useRef(slots.length);
   if (slots.length !== prevSlotCount.current) {
     prevSlotCount.current = slots.length;
@@ -78,7 +157,7 @@ export function SimulatorApp() {
 
     const onMove = (me: MouseEvent) => {
       const delta = ((me.clientX - startX) / totalW) * 100;
-      const minPct = (120 / totalW) * 100; // 120px minimum panel
+      const minPct = (120 / totalW) * 100;
       const newLeft = Math.min(combined - minPct, Math.max(minPct, startLeft + delta));
       const newRight = combined - newLeft;
       setWidths((prev) => {
@@ -96,203 +175,295 @@ export function SimulatorApp() {
     document.addEventListener("mouseup", onUp);
   }, [widths]);
 
-  return (
-    <div className={`flex h-screen overflow-hidden transition-colors ${display.darkMode ? "bg-[#111318]" : "bg-[#f5f5f3]"}`}>
+  const dark = display.darkMode;
 
-      {/* ── Left sidebar ── */}
-      <aside
+  return (
+    <div className={`flex h-screen flex-col overflow-hidden transition-colors ${dark ? "bg-[#111318]" : "bg-[#f5f5f3]"}`}>
+
+      {/* ── Review prompt banner ── */}
+      {showReviewBanner && (
+        <div className={`flex shrink-0 items-center gap-3 border-b px-4 py-2 text-[12px] font-semibold ${dark ? "border-white/10 bg-teal-900/40 text-teal-100" : "border-teal-100 bg-teal-50 text-teal-900"}`}>
+          <Star size={14} className="shrink-0 text-amber-400" />
+          <span className="flex-1">Enjoying Multi Device Viewer? Leave us a review — it helps a lot!</span>
+          <a
+            href="https://chromewebstore.google.com/detail/multi-device-viewer"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => dismissReview(true)}
+            className="rounded-md bg-teal-500 px-2.5 py-1 text-[11px] font-black text-white transition hover:bg-teal-400"
+          >
+            Rate it
+          </a>
+          <button
+            type="button"
+            onClick={() => dismissReview(true)}
+            className={`grid h-6 w-6 shrink-0 place-items-center rounded transition ${dark ? "hover:bg-white/10" : "hover:bg-teal-100"}`}
+            title="Dismiss"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
+      {/* ── Main row: sidebar + canvas ── */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+
+        {/* ── Left sidebar ── */}
+        <aside
           className={`flex shrink-0 flex-col border-r transition-all duration-200 max-[720px]:absolute max-[720px]:inset-y-0 max-[720px]:left-0 max-[720px]:z-30 max-[720px]:shadow-2xl ${
-            display.darkMode ? "border-white/10 bg-[#151922]" : "border-black/[0.07] bg-white"
+            dark ? "border-white/10 bg-[#151922]" : "border-black/[0.07] bg-white"
           } ${sidebarOpen ? "w-64" : "w-10"}`}
         >
-        {/* Logo / brand + toggle */}
-        <div className={`flex h-12 shrink-0 items-center gap-1 border-b px-2 ${display.darkMode ? "border-white/10" : "border-slate-100"}`}>
-          {sidebarOpen && (
-            <span className={`flex-1 pl-2 text-[13px] font-black tracking-tight ${display.darkMode ? "text-white" : "text-slate-800"}`}>Device Viewer</span>
-          )}
-          <button
-            type="button"
-            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-            onClick={() => setSidebarOpen((v) => !v)}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition ${
-              display.darkMode ? "text-slate-400 hover:bg-white/10 hover:text-white" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-            }`}
-          >
-            {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
-          </button>
-        </div>
-
-        <div className={`flex flex-1 flex-col gap-5 overflow-y-auto p-3.5 pb-0 ${sidebarOpen ? "" : "hidden"}`}>
-          {/* Display */}
-          <div>
-            <Label dark={display.darkMode}>Display</Label>
-            <div className="mt-2 flex flex-col gap-2">
-              <Toggle
-                active={display.showStatusBar}
-                dark={display.darkMode}
-                icon={<Signal size={15} />}
-                onClick={() => updateDisplay((current) => ({ ...current, showStatusBar: !current.showStatusBar }))}
-              >
-                Status bar
-              </Toggle>
-              <Toggle
-                active={display.showUrlBar}
-                dark={display.darkMode}
-                icon={<RectangleHorizontal size={15} />}
-                onClick={() => updateDisplay((current) => ({ ...current, showUrlBar: !current.showUrlBar }))}
-              >
-                Browser chrome
-              </Toggle>
-              <Toggle
-                active={display.scrollSync}
-                dark={display.darkMode}
-                icon={<Link2 size={15} />}
-                onClick={() => updateDisplay((current) => ({ ...current, scrollSync: !current.scrollSync }))}
-              >
-                Scroll sync
-              </Toggle>
-              <Toggle
-                active={display.darkMode}
-                dark={display.darkMode}
-                icon={display.darkMode ? <Moon size={15} /> : <Sun size={15} />}
-                onClick={() => updateDisplay((current) => ({ ...current, darkMode: !current.darkMode }))}
-              >
-                Dark mode
-              </Toggle>
-              <Toggle
-                active={display.inspectMode}
-                dark={display.darkMode}
-                icon={<Crosshair size={15} />}
-                onClick={() => updateDisplay((current) => ({ ...current, inspectMode: !current.inspectMode }))}
-              >
-                Inspect element
-              </Toggle>
-            </div>
-          </div>
-
-          {/* Devices */}
-          <div>
-            <Label dark={display.darkMode}>Devices</Label>
-            <div className="mt-1.5 flex flex-col gap-1">
-              <SidebarBtn
-                dark={display.darkMode}
-                icon={<RotateCw size={14} />}
-                onClick={() => reloadAllSlots()}
-              >
-                Reload all
-              </SidebarBtn>
-              {slots.length < 4 && (
-                <SidebarBtn dark={display.darkMode} icon={<PanelsTopLeft size={14} />} onClick={() => addSlot()}>
-                  Add device
-                </SidebarBtn>
-              )}
-            </div>
-          </div>
-
-          {/* Layout presets */}
-          <div>
-            <Label dark={display.darkMode}>Presets</Label>
-            <div className="mt-1.5 grid grid-cols-1 gap-1">
-              <SidebarBtn
-                dark={display.darkMode}
-                icon={<LayoutGrid size={14} />}
-                onClick={() => applyDevicePreset(["apple-iphone-14-pro-max-2022", "apple-ipad-air-4"])}
-              >
-                Mobile vs Tablet
-              </SidebarBtn>
-              <SidebarBtn
-                dark={display.darkMode}
-                icon={<LayoutGrid size={14} />}
-                onClick={() => applyDevicePreset(["apple-iphone-14-pro-max-2022", "samsung-galaxy-s24"])}
-              >
-                iOS standard vs Android
-              </SidebarBtn>
-              <SidebarBtn
-                dark={display.darkMode}
-                icon={<LayoutGrid size={14} />}
-                onClick={() => applyDevicePreset(["samsung-galaxy-s24", "apple-ipad-air-4", "macbook-air-2020-13"])}
-              >
-                Android + iOS tablet + laptop
-              </SidebarBtn>
-            </div>
-          </div>
-
-          {/* Capture */}
-          <div>
-            <Label dark={display.darkMode}>Capture</Label>
-            <div className="mt-1.5 flex flex-col gap-1">
-              <SidebarBtn dark={display.darkMode} icon={<Camera size={14} />} onClick={() => void takeScreenshot()} disabled={capturing}>
-                {capturing ? "Capturing…" : "Capture & Annotate"}
-              </SidebarBtn>
-            </div>
-          </div>
-        </div>
-
-        {/* Close button — at the bottom of the sidebar */}
-        <div className={`shrink-0 border-t p-3 ${display.darkMode ? "border-white/10" : "border-slate-100"} ${sidebarOpen ? "" : "hidden"}`}>
-          <button
-            type="button"
-            onClick={() => window.parent.postMessage({ type: "CLOSE_SIMULATOR" }, "*")}
-            className={`flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-[13px] font-medium transition ${
-              display.darkMode ? "text-slate-300 hover:bg-red-500/10 hover:text-red-200" : "text-slate-500 hover:bg-red-50 hover:text-red-600"
-            }`}
-          >
-            <X size={14} className="shrink-0" />
-            Close viewer
-          </button>
-        </div>
-      </aside>
-
-      {/* ── Preview canvas (resizable panels) ── */}
-      <main className="flex min-w-0 flex-1 overflow-hidden max-[720px]:pl-10">
-        <div
-          ref={boardRef}
-          data-capture-board
-          className={`flex h-full w-full ${narrowLayout ? "flex-col" : ""}`}
-        >
-          {slots.map((slot, i) => (
-            <div
-              key={slot.id}
-              className="relative flex h-full min-w-0 flex-col overflow-hidden"
-              style={{
-                width: narrowLayout ? "100%" : `${widths[i] ?? 100 / slots.length}%`,
-                height: narrowLayout ? `${100 / slots.length}%` : undefined,
-                flexShrink: 0,
-                flexGrow: 0
-              }}
+          {/* Logo / brand + toggle */}
+          <div className={`flex h-12 shrink-0 items-center gap-1 border-b px-2 ${dark ? "border-white/10" : "border-slate-100"}`}>
+            {sidebarOpen && (
+              <span className={`flex-1 pl-2 text-[13px] font-black tracking-tight ${dark ? "text-white" : "text-slate-800"}`}>Device Viewer</span>
+            )}
+            <button
+              type="button"
+              title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+              onClick={() => setSidebarOpen((v) => !v)}
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition ${
+                dark ? "text-slate-400 hover:bg-white/10 hover:text-white" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              }`}
             >
-              <PreviewCard
-                slot={slot}
-                device={findDevice(slot.deviceId)}
-                display={display}
-                removable={slots.length > 1}
-                onCapture={() => void takeScreenshot()}
-              />
-              {/* Drag handle — rendered on the right edge of every panel except the last */}
-              {i < slots.length - 1 && !narrowLayout && (
-                <div
-                  className="group absolute right-0 top-0 z-10 flex h-full w-[9px] cursor-col-resize flex-col items-center justify-center"
-                  onMouseDown={(e) => startResize(e, i)}
+              {sidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+            </button>
+          </div>
+
+          <div className={`flex flex-1 flex-col gap-5 overflow-y-auto p-3.5 pb-0 ${sidebarOpen ? "" : "hidden"}`}>
+            {/* Display */}
+            <div>
+              <Label dark={dark}>Display</Label>
+              <div className="mt-2 flex flex-col gap-2">
+                <Toggle
+                  active={display.showStatusBar}
+                  dark={dark}
+                  icon={<Signal size={15} />}
+                  onClick={() => updateDisplay((c) => ({ ...c, showStatusBar: !c.showStatusBar }))}
                 >
-                  {/* Divider line */}
-                  <div className="absolute inset-y-0 left-1/2 w-[1px] -translate-x-1/2 bg-black/[0.07] transition-all group-hover:w-[2px] group-hover:bg-slate-400/70" />
-                  {/* Grip pill — three dots centered vertically */}
-                  <div className="relative z-10 flex flex-col items-center gap-[3px] rounded-full bg-white px-[3px] py-[6px] shadow-[0_1px_4px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.08] transition-all group-hover:shadow-[0_2px_8px_rgba(0,0,0,0.16)] group-hover:ring-black/[0.14]">
-                    <span className="block h-[3px] w-[3px] rounded-full bg-slate-400 transition-colors group-hover:bg-slate-600" />
-                    <span className="block h-[3px] w-[3px] rounded-full bg-slate-400 transition-colors group-hover:bg-slate-600" />
-                    <span className="block h-[3px] w-[3px] rounded-full bg-slate-400 transition-colors group-hover:bg-slate-600" />
-                  </div>
+                  Status bar
+                </Toggle>
+                <Toggle
+                  active={display.showUrlBar}
+                  dark={dark}
+                  icon={<RectangleHorizontal size={15} />}
+                  onClick={() => updateDisplay((c) => ({ ...c, showUrlBar: !c.showUrlBar }))}
+                >
+                  Browser chrome
+                </Toggle>
+                <Toggle
+                  active={display.scrollSync}
+                  dark={dark}
+                  icon={<Link2 size={15} />}
+                  onClick={() => updateDisplay((c) => ({ ...c, scrollSync: !c.scrollSync }))}
+                >
+                  Scroll sync
+                </Toggle>
+                <Toggle
+                  active={dark}
+                  dark={dark}
+                  icon={dark ? <Moon size={15} /> : <Sun size={15} />}
+                  onClick={() => updateDisplay((c) => ({ ...c, darkMode: !c.darkMode }))}
+                >
+                  Dark mode
+                </Toggle>
+                <Toggle
+                  active={display.inspectMode}
+                  dark={dark}
+                  icon={<Crosshair size={15} />}
+                  onClick={() => updateDisplay((c) => ({ ...c, inspectMode: !c.inspectMode }))}
+                >
+                  Inspect element
+                </Toggle>
+              </div>
+            </div>
+
+            {/* Devices */}
+            <div>
+              <Label dark={dark}>Devices</Label>
+              <div className="mt-1.5 flex flex-col gap-1">
+                <SidebarBtn
+                  dark={dark}
+                  icon={<RotateCw size={14} />}
+                  onClick={() => reloadAllSlots()}
+                >
+                  Reload all
+                </SidebarBtn>
+                {slots.length < 4 && (
+                  <SidebarBtn dark={dark} icon={<PanelsTopLeft size={14} />} onClick={() => addSlot()}>
+                    Add device
+                  </SidebarBtn>
+                )}
+                <SidebarBtn dark={dark} icon={<Plus size={14} />} onClick={() => setShowCustomDevice(true)}>
+                  Custom device…
+                </SidebarBtn>
+              </div>
+            </div>
+
+            {/* Layout presets */}
+            <div>
+              <div className="flex items-center justify-between">
+                <Label dark={dark}>Presets</Label>
+                <button
+                  type="button"
+                  onClick={() => setShowPresetsSection((v) => !v)}
+                  className={`text-[10px] font-black uppercase tracking-widest transition ${dark ? "text-slate-600 hover:text-slate-400" : "text-slate-300 hover:text-slate-500"}`}
+                >
+                  {showPresetsSection ? "hide" : "manage"}
+                </button>
+              </div>
+              <div className="mt-1.5 grid grid-cols-1 gap-1">
+                <SidebarBtn
+                  dark={dark}
+                  icon={<LayoutGrid size={14} />}
+                  onClick={() => applyDevicePreset(["apple-iphone-14-pro-max-2022", "apple-ipad-air-4"])}
+                >
+                  Mobile vs Tablet
+                </SidebarBtn>
+                <SidebarBtn
+                  dark={dark}
+                  icon={<LayoutGrid size={14} />}
+                  onClick={() => applyDevicePreset(["apple-iphone-14-pro-max-2022", "samsung-galaxy-s24"])}
+                >
+                  iOS vs Android
+                </SidebarBtn>
+                <SidebarBtn
+                  dark={dark}
+                  icon={<LayoutGrid size={14} />}
+                  onClick={() => applyDevicePreset(["samsung-galaxy-s24", "apple-ipad-air-4", "macbook-air-2020-13"])}
+                >
+                  Android + Tablet + Laptop
+                </SidebarBtn>
+              </div>
+              {showPresetsSection && (
+                <div className="mt-2">
+                  <PresetsManager
+                    dark={dark}
+                    currentDeviceIds={slots.map((s) => s.deviceId)}
+                    onApply={applyDevicePreset}
+                  />
                 </div>
               )}
             </div>
-          ))}
+
+            {/* Capture */}
+            <div>
+              <Label dark={dark}>Capture</Label>
+              <div className="mt-1.5 flex flex-col gap-1">
+                <SidebarBtn dark={dark} icon={<Camera size={14} />} onClick={() => void takeScreenshot()} disabled={capturing}>
+                  {capturing ? "Capturing…" : "Capture & Annotate"}
+                </SidebarBtn>
+              </div>
+            </div>
+          </div>
+
+          {/* Close button */}
+          <div className={`shrink-0 border-t p-3 ${dark ? "border-white/10" : "border-slate-100"} ${sidebarOpen ? "" : "hidden"}`}>
+            <button
+              type="button"
+              onClick={() => window.parent.postMessage({ type: "CLOSE_SIMULATOR" }, "*")}
+              className={`flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-[13px] font-medium transition ${
+                dark ? "text-slate-300 hover:bg-red-500/10 hover:text-red-200" : "text-slate-500 hover:bg-red-50 hover:text-red-600"
+              }`}
+            >
+              <X size={14} className="shrink-0" />
+              Close viewer
+            </button>
+          </div>
+        </aside>
+
+        {/* ── Right pane: URL bar + preview canvas ── */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden max-[720px]:pl-10">
+
+          {/* ── Global URL bar ── */}
+          <div className={`flex shrink-0 items-center gap-2 border-b px-3 py-2 ${dark ? "border-white/10 bg-[#151922]" : "border-black/[0.06] bg-white"}`}>
+            <input
+              type="url"
+              value={urlDraft}
+              onChange={(e) => setUrlDraft(e.target.value)}
+              onKeyDown={handleUrlKeyDown}
+              onFocus={(e) => e.target.select()}
+              onBlur={(e) => applyUrl(e.target.value)}
+              placeholder="Enter URL…"
+              spellCheck={false}
+              className={`min-w-0 flex-1 rounded-lg border px-3 py-1.5 font-mono text-[12px] font-medium outline-none transition ${
+                dark
+                  ? "border-white/10 bg-white/[0.05] text-white placeholder:text-slate-500 focus:border-teal-400/60 focus:bg-white/[0.08]"
+                  : "border-slate-200 bg-slate-50 text-slate-800 placeholder:text-slate-400 focus:border-teal-500 focus:bg-white"
+              }`}
+            />
+            <button
+              type="button"
+              onClick={() => applyUrl(urlDraft)}
+              className={`h-8 shrink-0 rounded-lg px-3 text-[12px] font-black transition ${
+                dark ? "bg-teal-500/20 text-teal-300 hover:bg-teal-500/30" : "bg-teal-500 text-white hover:bg-teal-400"
+              }`}
+            >
+              Go
+            </button>
+          </div>
+
+          {/* ── Preview canvas (resizable panels) ── */}
+          <main className="flex min-h-0 flex-1 overflow-hidden">
+            <div
+              ref={boardRef}
+              data-capture-board
+              className={`flex h-full w-full ${narrowLayout ? "flex-col" : ""}`}
+            >
+              {slots.map((slot, i) => (
+                <div
+                  key={slot.id}
+                  className="relative flex h-full min-w-0 flex-col overflow-hidden"
+                  style={{
+                    width: narrowLayout ? "100%" : `${widths[i] ?? 100 / slots.length}%`,
+                    height: narrowLayout ? `${100 / slots.length}%` : undefined,
+                    flexShrink: 0,
+                    flexGrow: 0
+                  }}
+                >
+                  <PreviewCard
+                    slot={slot}
+                    device={findDevice(slot.deviceId)}
+                    display={display}
+                    removable={slots.length > 1}
+                    onCapture={() => void takeScreenshot()}
+                  />
+                  {/* Drag handle */}
+                  {i < slots.length - 1 && !narrowLayout && (
+                    <div
+                      className="group absolute right-0 top-0 z-10 flex h-full w-[9px] cursor-col-resize flex-col items-center justify-center"
+                      onMouseDown={(e) => startResize(e, i)}
+                    >
+                      <div className="absolute inset-y-0 left-1/2 w-[1px] -translate-x-1/2 bg-black/[0.07] transition-all group-hover:w-[2px] group-hover:bg-slate-400/70" />
+                      <div className="relative z-10 flex flex-col items-center gap-[3px] rounded-full bg-white px-[3px] py-[6px] shadow-[0_1px_4px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.08] transition-all group-hover:shadow-[0_2px_8px_rgba(0,0,0,0.16)] group-hover:ring-black/[0.14]">
+                        <span className="block h-[3px] w-[3px] rounded-full bg-slate-400 transition-colors group-hover:bg-slate-600" />
+                        <span className="block h-[3px] w-[3px] rounded-full bg-slate-400 transition-colors group-hover:bg-slate-600" />
+                        <span className="block h-[3px] w-[3px] rounded-full bg-slate-400 transition-colors group-hover:bg-slate-600" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </main>
         </div>
-      </main>
+      </div>
 
       {annotationOpen && <AnnotationOverlay imageUrl={annotationImage} meta={captureMeta} onClose={() => setAnnotationOpen(false)} />}
+
+      {showCustomDevice && (
+        <CustomDeviceModal
+          dark={dark}
+          onClose={() => setShowCustomDevice(false)}
+          onCreated={() => setShowCustomDevice(false)}
+        />
+      )}
     </div>
   );
 }
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function Label({ children, dark }: { children: ReactNode; dark: boolean }) {
   return (

@@ -72,10 +72,51 @@ function setupPreviewBridge() {
     return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
   }
 
+  function buildBreadcrumb(el: Element): string {
+    const parts: string[] = [];
+    let cur: Element | null = el;
+    while (cur && cur !== document.body && parts.length < 5) {
+      let label = cur.tagName.toLowerCase();
+      if (cur.id) label += `#${cur.id}`;
+      else if (cur.classList.length) label += `.${Array.from(cur.classList).slice(0, 2).join(".")}`;
+      parts.unshift(label);
+      cur = cur.parentElement;
+    }
+    return parts.join(" > ");
+  }
+
   function collectInspectData(el: Element, x: number, y: number) {
     const rect = el.getBoundingClientRect();
     const cs = window.getComputedStyle(el);
     const classes = Array.from(el.classList);
+
+    // Flex/Grid context props
+    const isFlexItem = cs.display === "flex" || cs.display === "inline-flex";
+    const isGridItem = cs.display === "grid" || cs.display === "inline-grid";
+    const parentCs = el.parentElement ? window.getComputedStyle(el.parentElement) : null;
+    const parentDisplay = parentCs?.display ?? "";
+    const isInFlex = parentDisplay === "flex" || parentDisplay === "inline-flex";
+    const isInGrid = parentDisplay === "grid" || parentDisplay === "inline-grid";
+
+    // Build a compact "copy as CSS" snippet
+    const cssSnippet = [
+      `display: ${cs.display};`,
+      cs.position !== "static" ? `position: ${cs.position};` : "",
+      `width: ${Math.round(rect.width)}px;`,
+      `height: ${Math.round(rect.height)}px;`,
+      cs.paddingTop !== "0px" || cs.paddingRight !== "0px" || cs.paddingBottom !== "0px" || cs.paddingLeft !== "0px"
+        ? `padding: ${cs.paddingTop} ${cs.paddingRight} ${cs.paddingBottom} ${cs.paddingLeft};` : "",
+      cs.marginTop !== "0px" || cs.marginRight !== "0px" || cs.marginBottom !== "0px" || cs.marginLeft !== "0px"
+        ? `margin: ${cs.marginTop} ${cs.marginRight} ${cs.marginBottom} ${cs.marginLeft};` : "",
+      cs.fontSize ? `font-size: ${cs.fontSize};` : "",
+      cs.fontWeight ? `font-weight: ${cs.fontWeight};` : "",
+      cs.color ? `color: ${rgbToHex(cs.color)};` : "",
+      cs.backgroundColor && cs.backgroundColor !== "rgba(0, 0, 0, 0)"
+        ? `background-color: ${rgbToHex(cs.backgroundColor)};` : "",
+      cs.borderRadius && cs.borderRadius !== "0px" ? `border-radius: ${cs.borderRadius};` : "",
+      cs.boxShadow && cs.boxShadow !== "none" ? `box-shadow: ${cs.boxShadow};` : "",
+    ].filter(Boolean).join("\n");
+
     const post = (type: string) => {
       if (!slotId) return;
       window.parent.postMessage({
@@ -84,10 +125,13 @@ function setupPreviewBridge() {
         tagName: el.tagName,
         id: el.id,
         classes,
+        breadcrumb: buildBreadcrumb(el),
         fontFamily: cs.fontFamily,
         fontSize: cs.fontSize,
         fontWeight: cs.fontWeight,
         lineHeight: cs.lineHeight,
+        letterSpacing: cs.letterSpacing,
+        textAlign: cs.textAlign,
         color: cs.color,
         colorHex: rgbToHex(cs.color),
         backgroundColor: cs.backgroundColor,
@@ -100,14 +144,40 @@ function setupPreviewBridge() {
         marginRight: cs.marginRight,
         marginBottom: cs.marginBottom,
         marginLeft: cs.marginLeft,
+        borderWidth: cs.borderWidth,
+        borderColor: cs.borderColor,
+        borderColorHex: rgbToHex(cs.borderColor),
         width: rect.width,
         height: rect.height,
         display: cs.display,
         position: cs.position,
+        overflow: cs.overflow,
+        overflowX: cs.overflowX,
+        overflowY: cs.overflowY,
+        transform: cs.transform !== "none" ? cs.transform : "",
         borderRadius: cs.borderRadius,
         opacity: cs.opacity,
         zIndex: cs.zIndex,
         boxShadow: cs.boxShadow,
+        // Flex/Grid
+        isFlexContainer: isFlexItem,
+        flexDirection: isFlexItem ? cs.flexDirection : "",
+        flexWrap: isFlexItem ? cs.flexWrap : "",
+        justifyContent: isFlexItem ? cs.justifyContent : "",
+        alignItems: isFlexItem ? cs.alignItems : "",
+        gap: isFlexItem || isGridItem ? cs.gap : "",
+        isGridContainer: isGridItem,
+        gridTemplateColumns: isGridItem ? cs.gridTemplateColumns : "",
+        gridTemplateRows: isGridItem ? cs.gridTemplateRows : "",
+        isInFlex,
+        flexGrow: isInFlex ? cs.flexGrow : "",
+        flexShrink: isInFlex ? cs.flexShrink : "",
+        flexBasis: isInFlex ? cs.flexBasis : "",
+        alignSelf: isInFlex || isInGrid ? cs.alignSelf : "",
+        isInGrid,
+        gridColumn: isInGrid ? cs.gridColumn : "",
+        gridRow: isInGrid ? cs.gridRow : "",
+        cssSnippet,
         x,
         y,
         rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },

@@ -112,29 +112,6 @@ export default defineBackground(() => {
       return true;
     }
 
-    // ── CAPTURE_TAB: plain captureVisibleTab at current viewport ────────────
-    if (message?.type === "CAPTURE_TAB") {
-      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-        const tab = tabs[0];
-        if (!tab?.id || !tab?.windowId) { sendResponse({ error: "No active tab" }); return; }
-        const tabId = tab.id;
-        const windowId = tab.windowId;
-
-        withHiddenOverlay(tabId, () =>
-          new Promise<string>((resolve, reject) => {
-            chrome.tabs.captureVisibleTab(windowId, { format: "png" }, (dataUrl) => {
-              if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-              else resolve(dataUrl);
-            });
-          })
-        ).then(
-          (dataUrl) => sendResponse({ dataUrl }),
-          (err) => sendResponse({ error: String(err) })
-        );
-      });
-      return true;
-    }
-
     // ── CAPTURE_TAB_FOR_VIEWPORT: emulate mobile viewport via debugger ───────
     if (message?.type === "CAPTURE_TAB_FOR_VIEWPORT") {
       const { width, height, contentHeight, deviceScaleFactor = 2, mobile = true } = message as {
