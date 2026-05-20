@@ -16,7 +16,7 @@ interface SimulatorContextValue extends SimulatorState {
   addSlot: (deviceId?: string) => void;
   removeSlot: (slotId: string) => void;
   duplicateActiveSlot: (deviceId?: string) => void;
-  updateDisplay: (display: DisplaySettings) => void;
+  updateDisplay: (display: DisplaySettings | ((current: DisplaySettings) => DisplaySettings)) => void;
 }
 
 const SimulatorContext = createContext<SimulatorContextValue | null>(null);
@@ -25,6 +25,7 @@ const defaultDisplay: DisplaySettings = {
   showStatusBar: true,
   showBattery: true,
   showUrlBar: true,
+  darkMode: false,
   presentationMode: false,
   hideChrome: false
 };
@@ -145,7 +146,7 @@ export function SimulatorProvider({ children }: { children: ReactNode }) {
     });
   }, [activeSlotId]);
 
-  const updateDisplay = useCallback((nextDisplay: DisplaySettings) => {
+  const updateDisplay = useCallback((nextDisplay: DisplaySettings | ((current: DisplaySettings) => DisplaySettings)) => {
     setDisplay(nextDisplay);
   }, []);
 

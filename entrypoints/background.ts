@@ -1,11 +1,37 @@
 import { defineBackground } from "wxt/utils/define-background";
 
+const OPEN_SIMULATOR_MENU_ID = "open-tab-in-device-simulator";
+
 export default defineBackground(() => {
   chrome.runtime.onInstalled.addListener(() => {
     void chrome.storage.local.set({ installedAt: new Date().toISOString() });
+    createContextMenu();
+  });
+
+  chrome.runtime.onStartup.addListener(() => {
+    createContextMenu();
   });
 
   chrome.action.onClicked.addListener((tab) => {
+    openSimulatorForTab(tab);
+  });
+
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== OPEN_SIMULATOR_MENU_ID || !tab) return;
+    openSimulatorForTab(tab);
+  });
+
+  function createContextMenu() {
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({
+        id: OPEN_SIMULATOR_MENU_ID,
+        title: "Open this tab in Device Simulator",
+        contexts: ["page", "action"],
+      });
+    });
+  }
+
+  function openSimulatorForTab(tab: chrome.tabs.Tab) {
     if (!tab.id) return;
 
     const url =
@@ -22,7 +48,7 @@ export default defineBackground(() => {
         })
         .catch(console.error);
     });
-  });
+  }
 
   // ── Helper: hide overlay, wait, run fn, restore overlay ─────────────────────
   function withHiddenOverlay<T>(tabId: number, fn: () => Promise<T>): Promise<T> {

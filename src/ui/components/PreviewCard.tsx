@@ -68,35 +68,40 @@ export function PreviewCard({ slot, device, display, removable }: PreviewCardPro
       onFocus={() => setActiveSlot(slot.id)}
     >
       {/* ── Per-card header ── */}
-      <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-black/[0.06] bg-white px-2">
+      <div
+        className={`flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-2 py-1.5 transition-colors ${
+          display.darkMode ? "border-white/10 bg-[#151922]" : "border-black/[0.06] bg-white"
+        }`}
+      >
         {/* Device switcher */}
         <DeviceSwitcher
           currentDevice={device}
+          dark={display.darkMode}
           onSwitch={(id) => setSlotDevice(slot.id, id)}
         />
 
-        <span className="mx-1 h-4 w-px shrink-0 bg-slate-200" />
+        <span className={`mx-1 h-4 w-px shrink-0 ${display.darkMode ? "bg-white/10" : "bg-slate-200"}`} />
 
         {/* Viewport dims */}
-        <span className="shrink-0 text-[12px] font-medium tabular-nums text-slate-500">
+        <span className={`shrink-0 text-[12px] font-medium tabular-nums ${display.darkMode ? "text-slate-400" : "text-slate-500"}`}>
           {viewportSize.width}×{viewportSize.height}
         </span>
 
-        <div className="flex-1" />
+        <div className="min-w-3 flex-1" />
 
         {canRotate && (
-          <CardBtn label="Rotate" onClick={() => rotateSlot(slot.id)}>
+          <CardBtn dark={display.darkMode} label="Rotate" onClick={() => rotateSlot(slot.id)}>
             <RotateCw size={14} />
           </CardBtn>
         )}
-        <CardBtn label="Zoom out" onClick={() => zoomSlot(slot.id, "out")}>
+        <CardBtn dark={display.darkMode} label="Zoom out" onClick={() => zoomSlot(slot.id, "out")}>
           <Minus size={14} />
         </CardBtn>
-        <CardBtn label="Zoom in" onClick={() => zoomSlot(slot.id, "in")}>
+        <CardBtn dark={display.darkMode} label="Zoom in" onClick={() => zoomSlot(slot.id, "in")}>
           <Plus size={14} />
         </CardBtn>
         {removable && (
-          <CardBtn label="Remove" onClick={() => removeSlot(slot.id)}>
+          <CardBtn dark={display.darkMode} label="Remove" onClick={() => removeSlot(slot.id)}>
             <X size={14} />
           </CardBtn>
         )}
@@ -105,7 +110,7 @@ export function PreviewCard({ slot, device, display, removable }: PreviewCardPro
       {/* ── Canvas ── */}
       <div
         ref={containerRef}
-        className="flex flex-1 items-center justify-center overflow-hidden bg-[#f5f5f3]"
+        className={`flex flex-1 items-center justify-center overflow-hidden transition-colors ${display.darkMode ? "bg-[#101217]" : "bg-[#f5f5f3]"}`}
       >
         {containerSize.width > 0 && (
           <div
@@ -126,6 +131,7 @@ export function PreviewCard({ slot, device, display, removable }: PreviewCardPro
               showStatusBar={display.showStatusBar}
               showBattery={display.showBattery}
               showUrlBar={display.showUrlBar}
+              darkMode={display.darkMode}
               url={slot.url}
               viewportSize={viewportSize}
               orientation={slot.orientation}
@@ -138,7 +144,12 @@ export function PreviewCard({ slot, device, display, removable }: PreviewCardPro
                     key={`${slot.id}-${slot.reloadToken}`}
                     title={`${device.name} preview`}
                     src={slot.url}
-                    className="h-full w-full border-0 bg-white"
+                    className={`h-full w-full border-0 ${display.darkMode ? "bg-[#0f172a]" : "bg-white"}`}
+                    style={{
+                      backgroundColor: display.darkMode ? "#0f172a" : "#ffffff",
+                      colorScheme: display.darkMode ? "dark" : "light",
+                      filter: display.darkMode ? "invert(1) hue-rotate(180deg)" : undefined,
+                    }}
                     sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
                     onError={() => setBlocked(true)}
                   />
@@ -160,7 +171,7 @@ const TYPE_LABEL: Record<string, string> = {
   desktop: "Desktops", tv: "TV", watch: "Watch",
 };
 
-function DeviceSwitcher({ currentDevice, onSwitch }: { currentDevice: Device; onSwitch: (id: string) => void }) {
+function DeviceSwitcher({ currentDevice, dark, onSwitch }: { currentDevice: Device; dark: boolean; onSwitch: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -218,59 +229,69 @@ function DeviceSwitcher({ currentDevice, onSwitch }: { currentDevice: Device; on
   }, [filtered]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative min-w-[190px] flex-1">
       <button
         type="button"
+        data-testid="device-switcher-button"
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        className="flex h-7 items-center gap-1 rounded-md pl-2 pr-1.5 text-[13px] font-semibold text-slate-800 transition hover:bg-slate-100"
+        className={`flex h-9 w-full min-w-0 items-center gap-2 rounded-[8px] border px-2.5 text-[13px] font-semibold transition ${
+          dark ? "border-white/10 bg-white/[0.04] text-white hover:bg-white/[0.08]" : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100"
+        }`}
       >
-        <span className="max-w-[150px] truncate">{shortName(currentDevice.name)}</span>
-        <ChevronDown size={13} className="shrink-0 text-slate-500" />
+        <span className="min-w-0 flex-1 truncate">{shortName(currentDevice.name)}</span>
+        <ChevronDown size={14} className={`shrink-0 ${dark ? "text-slate-400" : "text-slate-500"}`} />
       </button>
 
       {open && (
         <div
-          className="absolute left-0 top-full z-50 mt-1 flex w-56 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_32px_rgba(0,0,0,0.14)]"
+          data-testid="device-switcher-panel"
+          className={`absolute left-0 top-full z-50 mt-1 flex w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-[10px] border shadow-[0_12px_40px_rgba(0,0,0,0.18)] ${
+            dark ? "border-white/10 bg-[#171b24]" : "border-slate-200 bg-white"
+          }`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Search */}
-          <div className="border-b border-slate-100 px-2.5 py-2">
+          <div className={`border-b px-3 py-2.5 ${dark ? "border-white/10" : "border-slate-100"}`}>
             <input
               ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search…"
-              className="w-full bg-transparent text-[12px] font-medium text-slate-800 outline-none placeholder:text-slate-400"
+              className={`w-full bg-transparent text-[13px] font-medium outline-none placeholder:text-slate-400 ${dark ? "text-white" : "text-slate-800"}`}
             />
           </div>
 
           {/* List */}
-          <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
+          <div ref={listRef} className="max-h-[420px] overflow-y-auto py-2">
             {grouped.map(([type, list]) => (
               <div key={type}>
-                <p className="px-3 pb-0.5 pt-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                <p className={`px-3 pb-1 pt-2 text-[10px] font-black uppercase tracking-widest ${dark ? "text-slate-500" : "text-slate-400"}`}>
                   {TYPE_LABEL[type]}
                 </p>
-                {list.map((d) => (
-                  <button
-                    key={d.id}
-                    ref={d.id === currentDevice.id ? activeItemRef : undefined}
-                    type="button"
-                    className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition hover:bg-slate-50 ${
-                      d.id === currentDevice.id ? "bg-slate-900 text-white hover:bg-slate-800" : "text-slate-700"
-                    }`}
-                    onClick={() => { onSwitch(d.id); setOpen(false); }}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12px] font-semibold leading-tight">
-                        {shortName(d.name)}
+                <div className="grid grid-cols-1 gap-1 px-2 min-[420px]:grid-cols-2">
+                  {list.map((d) => (
+                    <button
+                      key={d.id}
+                      ref={d.id === currentDevice.id ? activeItemRef : undefined}
+                      type="button"
+                      className={`flex min-h-12 w-full items-center gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition ${
+                        d.id === currentDevice.id
+                          ? "bg-slate-900 text-white hover:bg-slate-800"
+                          : dark ? "text-slate-200 hover:bg-white/[0.07]" : "text-slate-700 hover:bg-slate-50"
+                      }`}
+                      onClick={() => { onSwitch(d.id); setOpen(false); }}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] font-semibold leading-tight">
+                          {shortName(d.name)}
+                        </span>
+                        <span className={`mt-0.5 block text-[10px] ${d.id === currentDevice.id ? "text-white/60" : dark ? "text-slate-500" : "text-slate-400"}`}>
+                          {d.cssViewport.width}×{d.cssViewport.height} · {d.brand}
+                        </span>
                       </span>
-                      <span className={`text-[10px] ${d.id === currentDevice.id ? "text-white/50" : "text-slate-400"}`}>
-                        {d.cssViewport.width}×{d.cssViewport.height}
-                      </span>
-                    </span>
-                  </button>
-                ))}
+                    </button>
+                  ))}
+                </div>
               </div>
             ))}
             {grouped.length === 0 && (
@@ -302,13 +323,15 @@ function BlockedView({ url }: { url: string }) {
   );
 }
 
-function CardBtn({ label, children, onClick }: { label: string; children: ReactNode; onClick: () => void }) {
+function CardBtn({ dark, label, children, onClick }: { dark: boolean; label: string; children: ReactNode; onClick: () => void }) {
   return (
     <button
       type="button"
       title={label}
       aria-label={label}
-      className="grid h-7 w-7 shrink-0 place-items-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+      className={`grid h-8 w-8 shrink-0 place-items-center rounded-md transition ${
+        dark ? "text-slate-400 hover:bg-white/10 hover:text-white" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+      }`}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
     >
       {children}
