@@ -23,6 +23,7 @@ import type {
 import { useSimulator } from "../../app/SimulatorProvider";
 import { useDeviceCatalog } from "../../app/DeviceCatalogProvider";
 import { DeviceFrame, estimateDeviceFrameSize } from "./DeviceFrame";
+import { ElementInspectOverlay, type InspectData } from "./ElementInspectOverlay";
 
 const CARD_PAD = 32;
 interface ScrollSyncPayload {
@@ -64,6 +65,12 @@ export function PreviewCard({
   const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>("checking");
   const [scrollMeta, setScrollMeta] = useState<ScrollSyncPayload | null>(null);
   const [inspectOpen, setInspectOpen] = useState(false);
+  const [inspectData, setInspectData] = useState<InspectData | null>(null);
+  const [inspectLocked, setInspectLocked] = useState(false);
+  const inspectLockedRef = useRef(false);
+  // Direct DOM ref for the highlight box — updated imperatively on every MDV_INSPECT_MOVE
+  // to avoid React re-renders on every mousemove frame.
+  const highlightRef = useRef<HTMLDivElement | null>(null);
   const {
     setActiveSlot,
     removeSlot,
@@ -203,6 +210,76 @@ export function PreviewCard({
     return () => window.removeEventListener("MDV_SCROLL_SYNC_EVENT", onSync);
   }, [blocked, display.scrollSync, slot.id]);
 
+  // ── Inspect mode bridge ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!iframeRef.current) return;
+    iframeRef.current.contentWindow?.postMessage(
+      {
+        type: display.inspectMode ? "MDV_INSPECT_ENABLE" : "MDV_INSPECT_DISABLE",
+        slotId: slot.id,
+      },
+      "*",
+    );
+    if (!display.inspectMode) {
+      setInspectData(null);
+      inspectLockedRef.current = false;
+      setInspectLocked(false);
+      if (highlightRef.current) highlightRef.current.style.display = "none";
+    }
+  }, [display.inspectMode, slot.id]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const msg = event.data;
+      if (!msg || typeof msg !== "object" || msg.slotId !== slot.id) return;
+
+      // ── Hot path: just move the highlight box via direct DOM, zero React re-render ──
+      if (msg.type === "MDV_INSPECT_MOVE") {
+        if (inspectLockedRef.current) return;
+        const h = highlightRef.current;
+        const container = containerRef.current;
+        const iframe = iframeRef.current;
+        if (!h || !container || !iframe) return;
+        const cr = container.getBoundingClientRect();
+        const ir = iframe.getBoundingClientRect();
+        const ox = ir.left - cr.left;
+        const oy = ir.top - cr.top;
+        const r = msg.rect as { top: number; left: number; width: number; height: number };
+        // scale is captured from the closure — it's stable between renders
+        h.style.left   = `${ox + r.left   * scale}px`;
+        h.style.top    = `${oy + r.top    * scale}px`;
+        h.style.width  = `${Math.max(1, r.width  * scale)}px`;
+        h.style.height = `${Math.max(1, r.height * scale)}px`;
+        h.style.display = "block";
+        return;
+      }
+
+      // ── Element changed: update tooltip panel via React state ──
+      if (msg.type === "MDV_INSPECT_DATA") {
+        if (!inspectLockedRef.current) {
+          setInspectData(msg as unknown as InspectData);
+        }
+        return;
+      }
+
+      if (msg.type === "MDV_INSPECT_CLICK") {
+        if (inspectLockedRef.current) {
+          inspectLockedRef.current = false;
+          setInspectLocked(false);
+        } else {
+          setInspectData(msg as unknown as InspectData);
+          inspectLockedRef.current = true;
+          setInspectLocked(true);
+        }
+        return;
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [slot.id, scale]); // scale needed for coord math in the closure
+
   return (
     <section
       className="flex h-full flex-col overflow-hidden"
@@ -294,7 +371,7 @@ export function PreviewCard({
       {/* ── Canvas ── */}
       <div
         ref={containerRef}
-        className={`flex flex-1 items-center justify-center overflow-hidden transition-colors ${display.darkMode ? "bg-[#101217]" : "bg-[#f5f5f3]"}`}
+        className={`relative flex flex-1 items-center justify-center overflow-hidden transition-colors ${display.darkMode ? "bg-[#101217]" : "bg-[#f5f5f3]"}`}
       >
         {containerSize.width > 0 && (
           <div
@@ -353,6 +430,32 @@ export function PreviewCard({
               </div>
             </DeviceFrame>
           </div>
+        )}
+
+        {/* Inspect highlight box — driven imperatively via highlightRef, no React re-render on move */}
+        {display.inspectMode && (
+          <div
+            ref={highlightRef}
+            className="pointer-events-none absolute rounded-[2px] border-2 border-blue-500"
+            style={{
+              display: "none",
+              background: "rgba(59,130,246,0.07)",
+              boxShadow: "0 0 0 1px rgba(59,130,246,0.3)",
+              zIndex: 40,
+            }}
+          />
+        )}
+
+        {/* Inspect tooltip panel — only re-renders when element changes */}
+        {display.inspectMode && (
+          <ElementInspectOverlay
+            data={inspectData}
+            locked={inspectLocked}
+            scale={scale}
+            dark={display.darkMode}
+            containerRef={containerRef}
+            iframeRef={iframeRef}
+          />
         )}
       </div>
     </section>

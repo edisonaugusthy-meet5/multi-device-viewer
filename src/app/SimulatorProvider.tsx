@@ -29,7 +29,8 @@ const defaultDisplay: DisplaySettings = {
   scrollSync: false,
   darkMode: false,
   presentationMode: false,
-  hideChrome: false
+  hideChrome: false,
+  inspectMode: false
 };
 
 function initialUrlFromSearch() {

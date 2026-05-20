@@ -1,4 +1,4 @@
-import { Camera, Check, Link2, LayoutGrid, Moon, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, RectangleHorizontal, RotateCw, Signal, Sun, X } from "lucide-react";
+import { Camera, Check, Crosshair, Link2, LayoutGrid, Moon, PanelLeftClose, PanelLeftOpen, PanelsTopLeft, RectangleHorizontal, RotateCw, Signal, Sun, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useDeviceCatalog } from "../../app/DeviceCatalogProvider";
 import { useSimulator } from "../../app/SimulatorProvider";
@@ -158,6 +158,14 @@ export function SimulatorApp() {
                 onClick={() => updateDisplay((current) => ({ ...current, darkMode: !current.darkMode }))}
               >
                 Dark mode
+              </Toggle>
+              <Toggle
+                active={display.inspectMode}
+                dark={display.darkMode}
+                icon={<Crosshair size={15} />}
+                onClick={() => updateDisplay((current) => ({ ...current, inspectMode: !current.inspectMode }))}
+              >
+                Inspect element
               </Toggle>
             </div>
           </div>

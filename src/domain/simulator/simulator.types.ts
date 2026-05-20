@@ -21,6 +21,7 @@ export interface DisplaySettings {
   darkMode: boolean;
   presentationMode: boolean;
   hideChrome: boolean;
+  inspectMode: boolean;
 }
 
 export interface SimulatorState {
